@@ -1,0 +1,6 @@
+@ISHMS_HostAddress = http://localhost:5084
+
+GET {{ISHMS_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
