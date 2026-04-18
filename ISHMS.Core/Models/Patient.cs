@@ -1,5 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
-using ISHMS.Core.Enums;
+using ISHMS.Core.Constants.Enums;
 
 namespace ISHMS.Core.Models;
 

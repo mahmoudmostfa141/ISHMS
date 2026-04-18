@@ -1,4 +1,4 @@
-﻿namespace ISHMS.Core.Enums;
+﻿namespace ISHMS.Core.Constants.Enums;
 
 public enum PatientStatus
 {

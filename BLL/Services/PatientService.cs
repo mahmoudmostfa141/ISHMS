@@ -1,4 +1,4 @@
-﻿using ISHMS.Core.Enums;
+﻿using ISHMS.Core.Constants.Enums;
 using ISHMS.Core.Interfaces;
 using ISHMS.Core.Models;
 using ISHMS.DAL.DbContext;
