@@ -31,10 +31,7 @@ namespace ISHMS
 
             var app = builder.Build();
 
-            builder.Services.AddDbContext<AppDbContext>(options =>
-           options.UseSqlServer(
-        builder.Configuration.GetConnectionString("Default")
-    ));
+
             // Middleware
             if (app.Environment.IsDevelopment())
             {
