@@ -1,6 +1,6 @@
 ﻿using ISHMS.Core.Interfaces;
 using ISHMS.Core.Models;
-using ISHMS.DAL.DbContext;
+using ISHMS.DAL;
 using Microsoft.EntityFrameworkCore;
 
 namespace ISHMS.DAL.Repositories;

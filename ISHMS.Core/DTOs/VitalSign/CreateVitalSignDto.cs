@@ -1,26 +1,21 @@
 ﻿using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema;
 
-namespace ISHMS.Core.Models;
+namespace ISHMS.Core.DTOs;
 
-public class VitalSign
+public class CreateVitalDto
 {
-    [Key]
-    public int Id { get; set; }
-
     public int PatientId { get; set; }
 
-    [ForeignKey("PatientId")]
-    public Patient Patient { get; set; }
-
+    [Range(30, 200)]
     public int HeartRate { get; set; }
+
+    [Range(50, 100)]
     public int OxygenLevel { get; set; }
+
     public double Temperature { get; set; }
 
     public int SystolicPressure { get; set; }
     public int DiastolicPressure { get; set; }
 
     public int RespirationRate { get; set; }
-
-    public DateTime RecordedAt { get; set; } = DateTime.UtcNow;
 }

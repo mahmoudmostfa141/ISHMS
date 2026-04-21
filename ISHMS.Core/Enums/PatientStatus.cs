@@ -2,7 +2,7 @@
 
 public enum PatientStatus
 {
-    Stable = 1,
-    Unstable = 2,
-    Critical = 3
+    Stable,
+    Unstable,
+    Critical
 }
