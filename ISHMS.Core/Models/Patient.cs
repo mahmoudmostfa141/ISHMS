@@ -16,8 +16,11 @@ public class Patient
 
     public DateTime DateOfBirth { get; set; }
 
-    public PatientStatus CurrentStatus { get; set; } = PatientStatus.Stable;
+    public PatientStatus CurrentStatus { get; set; }
 
+    public PriorityLevel Priority { get; set; }
+
+    public int NewsScore { get; set; }
     public ICollection<VitalSign>? VitalSigns { get; set; }
     public DateTime AdmittedAt { get; set; }
 }

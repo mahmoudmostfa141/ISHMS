@@ -136,12 +136,17 @@ var builder = WebApplication.CreateBuilder(args);
 
             // Dependency Injection
             builder.Services.AddScoped<IPatientRepository, PatientRepository>();
-       builder.Services.AddScoped<IPatientService, PatientService>();
-        builder.Services.AddScoped<IAuthRepository, AuthRepository>();
+            builder.Services.AddScoped<IPatientService, PatientService>();
+            builder.Services.AddScoped<IAuthRepository, AuthRepository>();
             builder.Services.AddScoped<IAuthService, AuthService>();
+             builder.Services.AddScoped<NewsService>();
+//ward, room, bed
+           builder.Services.AddScoped<WardService>();
+            builder.Services.AddScoped<RoomService>();
+            builder.Services.AddScoped<BedService>();
 
 
-            var app = builder.Build();
+var app = builder.Build();
 
 
   

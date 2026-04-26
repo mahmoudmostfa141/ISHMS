@@ -9,4 +9,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
     public DbSet<Patient> Patients { get; set; }
     public DbSet<VitalSign> VitalSigns { get; set; }
+
+    public DbSet<Ward> Wards { get; set; }
+    public DbSet<Room> Rooms { get; set; }
+    public DbSet<Bed> Beds { get; set; }
+    public DbSet<WaitingPatient> WaitingPatients { get; set; }
 }
