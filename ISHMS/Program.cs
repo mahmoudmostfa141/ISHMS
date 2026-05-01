@@ -139,12 +139,10 @@ var builder = WebApplication.CreateBuilder(args);
             builder.Services.AddScoped<IPatientService, PatientService>();
             builder.Services.AddScoped<IAuthRepository, AuthRepository>();
             builder.Services.AddScoped<IAuthService, AuthService>();
-             builder.Services.AddScoped<NewsService>();
-//ward, room, bed
-           builder.Services.AddScoped<WardService>();
-            builder.Services.AddScoped<RoomService>();
-            builder.Services.AddScoped<BedService>();
-
+            builder.Services.AddScoped<NewsService>();
+//department, bed
+            builder.Services.AddScoped<IBedService, BedService>();
+            builder.Services.AddScoped<IDepartmentService, DepartmentService>();
 
 var app = builder.Build();
 
@@ -169,8 +167,55 @@ var app = builder.Build();
                 }
             }
 
-            // Middleware
-            if (app.Environment.IsDevelopment())
+// Seed departments and rooms and beds
+
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+    if (!context.Departments.Any())
+    {
+        var departments = new List<string>
+        {
+            "Cardiology",
+            "Neurology",
+            "Emergency",
+            "ICU"
+        };
+
+        foreach (var deptName in departments)
+        {
+            var dept = new Department { Name = deptName };
+            context.Departments.Add(dept);
+            await context.SaveChangesAsync();
+
+            for (int i = 1; i <= 10; i++)
+            {
+                var room = new Room
+                {
+                    RoomNumber = $"{deptName}-{i}",
+                    DepartmentId = dept.Id
+                };
+
+                context.Rooms.Add(room);
+                await context.SaveChangesAsync();
+
+                for (int j = 1; j <= 5; j++)
+                {
+                    context.Beds.Add(new Bed
+                    {
+                        RoomId = room.Id
+                    });
+                }
+
+                await context.SaveChangesAsync();
+            }
+        }
+    }
+}
+
+// Middleware
+if (app.Environment.IsDevelopment())
             {
                 app.UseSwagger();
                 app.UseSwaggerUI();

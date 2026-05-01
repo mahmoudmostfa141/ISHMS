@@ -1,5 +1,6 @@
-﻿using ISHMS.Core.DTOs;
-using ISHMS.Core.Enums;
+﻿using ISHMS.Core.Constants.Enums;
+using ISHMS.Core.DTOs;
+using ISHMS.Core.DTOs.Patient;
 using ISHMS.Core.Interfaces;
 using ISHMS.Core.Models;
 using ISHMS.DAL;
@@ -18,14 +19,21 @@ public class PatientService : IPatientService
         _newsService = newsService;
     }
 
-    // ✅ Create Patient
+    // ✅ Receptionist — Create Patient + Assign Bed
     public async Task<PatientResponseDto> Create(CreatePatientDto dto)
     {
-        var patient = PatientMapper.ToEntity(dto);
+        if (dto.BedId > 0)
+        {
+            var bed = await _context.Beds
+                .FirstOrDefaultAsync(b => b.Id == dto.BedId);
 
-        // Default values
+            if (bed == null) throw new Exception("Bed not found");
+            if (bed.IsOccupied) throw new Exception("Bed is already occupied");
+            bed.IsOccupied = true;
+        }
+
+        var patient = PatientMapper.ToEntity(dto);
         patient.CurrentStatus = PatientStatus.Stable;
-        patient.Priority = PriorityLevel.Low;
         patient.NewsScore = 0;
 
         await _context.Patients.AddAsync(patient);
@@ -37,28 +45,19 @@ public class PatientService : IPatientService
     // ✅ Get All
     public async Task<List<PatientResponseDto>> GetAll()
     {
-        var data = await _context.Patients.ToListAsync();
+        var data = await _context.Patients
+            .Include(p => p.VitalSigns)
+            .ToListAsync();
         return data.Select(PatientMapper.ToDto).ToList();
     }
 
     // ✅ Get By Id
     public async Task<PatientResponseDto?> GetById(int id)
     {
-        var p = await _context.Patients.FindAsync(id);
+        var p = await _context.Patients
+            .Include(p => p.VitalSigns)
+            .FirstOrDefaultAsync(p => p.Id == id);
         return p == null ? null : PatientMapper.ToDto(p);
-    }
-
-    // ✅ Update
-    public async Task Update(int id, UpdatePatientDto dto)
-    {
-        var p = await _context.Patients.FindAsync(id);
-        if (p == null) throw new Exception("Patient Not Found");
-
-        p.FullName = dto.FullName;
-        p.Age = dto.Age;
-        p.DateOfBirth = dto.DateOfBirth;
-
-        await _context.SaveChangesAsync();
     }
 
     // ✅ Delete
@@ -67,17 +66,35 @@ public class PatientService : IPatientService
         var p = await _context.Patients.FindAsync(id);
         if (p == null) throw new Exception("Patient Not Found");
 
+        // تحرير السرير عند الحذف
+        if (p.BedId.HasValue)
+        {
+            var bed = await _context.Beds.FindAsync(p.BedId.Value);
+            if (bed != null) bed.IsOccupied = false;
+        }
+
         _context.Patients.Remove(p);
         await _context.SaveChangesAsync();
     }
 
-    // 🔥 Add Vital + NEWS + Priority + Bed Logic
+    // ✅ Nurse — تحديث Background والأدوية القديمة
+    public async Task UpdateNurseInfo(int id, UpdateNurseDto dto)
+    {
+        var p = await _context.Patients.FindAsync(id);
+        if (p == null) throw new Exception("Patient Not Found");
+
+        p.Background = dto.Background;
+        p.PreviousMedications = dto.PreviousMedications;
+
+        await _context.SaveChangesAsync();
+    }
+
+    // ✅ Nurse — إضافة VitalSigns + حساب NEWS
     public async Task AddVital(CreateVitalDto dto)
     {
         var patient = await _context.Patients.FindAsync(dto.PatientId);
         if (patient == null) throw new Exception("Patient Not Found");
 
-        // ✅ Save Vital
         var vital = new VitalSign
         {
             PatientId = dto.PatientId,
@@ -86,7 +103,8 @@ public class PatientService : IPatientService
             Temperature = dto.Temperature,
             SystolicPressure = dto.SystolicPressure,
             DiastolicPressure = dto.DiastolicPressure,
-            RespirationRate = dto.RespirationRate
+            RespirationRate = dto.RespirationRate,
+            RecordedAt = DateTime.UtcNow
         };
 
         await _context.VitalSigns.AddAsync(vital);
@@ -100,38 +118,19 @@ public class PatientService : IPatientService
             dto.RespirationRate
         );
 
-        // ✅ Update Patient حالة
         patient.NewsScore = result.score;
         patient.CurrentStatus = result.status;
-        patient.Priority = result.priority;
 
-        // 🔥 Check Available Bed
-        var freeBed = await _context.Beds
-            .FirstOrDefaultAsync(b => !b.IsOccupied);
+        await _context.SaveChangesAsync();
+    }
 
-        if (freeBed != null)
-        {
-            // ✅ Assign Bed
-            freeBed.IsOccupied = true;
-            freeBed.PatientId = patient.Id;
-        }
-        else
-        {
-            // 🔥 Add to Waiting List
-            var alreadyWaiting = await _context.WaitingPatients
-                .AnyAsync(w => w.PatientId == patient.Id);
+    // ✅ Doctor — تحديث العلاج الحالي
+    public async Task UpdateDoctorInfo(int id, UpdateDoctorDto dto)
+    {
+        var p = await _context.Patients.FindAsync(id);
+        if (p == null) throw new Exception("Patient Not Found");
 
-            if (!alreadyWaiting)
-            {
-                var waiting = new WaitingPatient
-                {
-                    PatientId = patient.Id,
-                    Priority = patient.Priority
-                };
-
-                await _context.WaitingPatients.AddAsync(waiting);
-            }
-        }
+        p.CurrentTreatment = dto.CurrentTreatment;
 
         await _context.SaveChangesAsync();
     }

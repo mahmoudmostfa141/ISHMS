@@ -1,10 +1,12 @@
-﻿using ISHMS.Core.Models;
+﻿using ISHMS.Core.DTOs;
+using ISHMS.Core.DTOs.DepartmentBed;
+using ISHMS.Core.Interfaces;
 using ISHMS.DAL;
 using Microsoft.EntityFrameworkCore;
 
 namespace ISHMS.BLL.Services;
 
-public class BedService
+public class BedService : IBedService
 {
     private readonly AppDbContext _context;
 
@@ -13,97 +15,62 @@ public class BedService
         _context = context;
     }
 
-    // ✅ Create Bed
-    public async Task<Bed> Create(int roomId)
+    public async Task AssignPatient(AssignBedDto dto)
     {
-        var room = await _context.Rooms.FindAsync(roomId);
-        if (room == null)
-            throw new Exception("Room not found");
-
-        var bed = new Bed
-        {
-            RoomId = roomId,
-            IsOccupied = false
-        };
-
-        await _context.Beds.AddAsync(bed);
-        await _context.SaveChangesAsync();
-
-        return bed;
-    }
-
-    // ✅ Get Beds by Room
-    public async Task<List<Bed>> GetByRoom(int roomId)
-    {
-        return await _context.Beds
-            .Where(b => b.RoomId == roomId)
-            .Include(b => b.Patient)
-            .ToListAsync();
-    }
-
-    // 🔥 Assign Patient manually (Admit)
-    public async Task AssignPatient(int bedId, int patientId)
-    {
-        var bed = await _context.Beds.FindAsync(bedId);
-        if (bed == null) throw new Exception("Bed not found");
-
-        if (bed.IsOccupied)
-            throw new Exception("Bed already occupied");
-
-        // ✅ تأكد إن المريض مش موجود في Waiting List
-        var waiting = await _context.WaitingPatients
-            .FirstOrDefaultAsync(w => w.PatientId == patientId);
-
-        if (waiting != null)
-            _context.WaitingPatients.Remove(waiting);
-
-        bed.IsOccupied = true;
-        bed.PatientId = patientId;
-
-        await _context.SaveChangesAsync();
-    }
-
-    // 🔥 Discharge + Auto Assign
-    public async Task RemovePatient(int bedId)
-    {
-        var bed = await _context.Beds.FindAsync(bedId);
-        if (bed == null) throw new Exception("Bed not found");
-
-        // ✅ فضّي السرير
-        bed.IsOccupied = false;
-        bed.PatientId = null;
-
-        // 🔥 هات أعلى Priority من Waiting List
-        var next = await _context.WaitingPatients
-            .Include(w => w.Patient)
-            .OrderByDescending(w => w.Priority)
-            .ThenBy(w => w.AddedAt)
+        // 🔥 جيب أول سرير فاضي في القسم
+        var bed = await _context.Beds
+            .Include(b => b.Room)
+            .Where(b => !b.IsOccupied &&
+                        b.Room.DepartmentId == dto.DepartmentId)
             .FirstOrDefaultAsync();
 
-        if (next != null)
-        {
-            // 🔥 Auto Assign
-            bed.IsOccupied = true;
-            bed.PatientId = next.PatientId;
+        if (bed == null)
+            throw new Exception("No beds available in this department");
 
-            // ❌ امسحه من الانتظار
-            _context.WaitingPatients.Remove(next);
-        }
+        // 🔥 اربط المريض
+        bed.IsOccupied = true;
+        bed.PatientId = dto.PatientId;
+
+        var patient = await _context.Patients.FindAsync(dto.PatientId);
+        if (patient == null)
+            throw new Exception("Patient not found");
+
+        patient.BedId = bed.Id;
 
         await _context.SaveChangesAsync();
     }
 
-    // 🔥 Get Available Beds
-    public async Task<List<Bed>> GetAvailableBeds()
+    // كل الأسرّة المتاحة
+    public async Task<List<AvailableBedDto>> GetAvailableBeds()
     {
         return await _context.Beds
             .Where(b => !b.IsOccupied)
+            .Include(b => b.Room)
+                .ThenInclude(r => r.Department)
+            .Select(b => new AvailableBedDto
+            {
+                BedId = b.Id,
+                RoomNumber = b.Room.RoomNumber,
+                DepartmentId = b.Room.Department.Id,
+                DepartmentName = b.Room.Department.Name
+            })
             .ToListAsync();
     }
 
-    // 🔥 Check if Full
-    public async Task<bool> IsFull()
+    // الأسرّة المتاحة في قسم معين
+    public async Task<List<AvailableBedDto>> GetAvailableBedsByDepartment(int departmentId)
     {
-        return !await _context.Beds.AnyAsync(b => !b.IsOccupied);
+        return await _context.Beds
+            .Where(b => !b.IsOccupied && b.Room.Department.Id == departmentId)
+            .Include(b => b.Room)
+                .ThenInclude(r => r.Department)
+            .Select(b => new AvailableBedDto
+            {
+                BedId = b.Id,
+                RoomNumber = b.Room.RoomNumber,
+                DepartmentId = b.Room.Department.Id,
+                DepartmentName = b.Room.Department.Name
+            })
+            .ToListAsync();
     }
 }

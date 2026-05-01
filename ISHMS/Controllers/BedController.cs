@@ -1,5 +1,9 @@
-﻿using ISHMS.BLL.Services;
+﻿using ISHMS.Core.DTOs;
+using ISHMS.Core.DTOs.DepartmentBed;
+using ISHMS.Core.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace ISHMS.API.Controllers;
 
@@ -7,36 +11,35 @@ namespace ISHMS.API.Controllers;
 [Route("api/[controller]")]
 public class BedController : ControllerBase
 {
-    private readonly BedService _service;
+    private readonly IBedService _service;
 
-    public BedController(BedService service)
+    public BedController(IBedService service)
     {
         _service = service;
     }
 
-    [HttpPost]
-    public async Task<IActionResult> Create(int roomId)
-    {
-        return Ok(await _service.Create(roomId));
-    }
-
-    [HttpGet("{roomId}")]
-    public async Task<IActionResult> GetByRoom(int roomId)
-    {
-        return Ok(await _service.GetByRoom(roomId));
-    }
-
     [HttpPost("assign")]
-    public async Task<IActionResult> Assign(int bedId, int patientId)
+    public async Task<IActionResult> Assign(AssignBedDto dto)
     {
-        await _service.AssignPatient(bedId, patientId);
-        return Ok("Patient Assigned");
+        await _service.AssignPatient(dto);
+        return Ok("Patient Assigned Successfully");
     }
 
-    [HttpPost("discharge")]
-    public async Task<IActionResult> Discharge(int bedId)
+    // ✅ كل الأسرّة المتاحة
+    [HttpGet("available")]
+    [Authorize(Roles = "Receptionist,Admin")]
+    public async Task<IActionResult> GetAvailableBeds()
     {
-        await _service.RemovePatient(bedId);
-        return Ok("Patient Discharged");
+        var beds = await _service.GetAvailableBeds();
+        return Ok(beds);
+    }
+
+    // ✅ أسرّة متاحة في قسم معين
+    [HttpGet("available/{departmentId}")]
+    [Authorize(Roles = "Receptionist,Admin")]
+    public async Task<IActionResult> GetAvailableBedsByDepartment(int departmentId)
+    {
+        var beds = await _service.GetAvailableBedsByDepartment(departmentId);
+        return Ok(beds);
     }
 }

@@ -1,10 +1,10 @@
-﻿using ISHMS.Core.Enums;
+﻿using ISHMS.Core.Constants.Enums;
 
 namespace ISHMS.BLL.Services;
 
 public class NewsService
 {
-    public (int score, PatientStatus status, PriorityLevel priority) Calculate(
+    public (int score, PatientStatus status) Calculate(
         int heartRate,
         int oxygen,
         double temp,
@@ -42,12 +42,8 @@ public class NewsService
             PatientStatus.Stable;
 
         // ⚡ تحديد الأولوية
-        PriorityLevel priority =
-            score >= 7 ? PriorityLevel.Emergency :
-            score >= 4 ? PriorityLevel.High :
-            score >= 2 ? PriorityLevel.Medium :
-            PriorityLevel.Low;
+      
 
-        return (score, status, priority);
+        return (score, status);
     }
 }
