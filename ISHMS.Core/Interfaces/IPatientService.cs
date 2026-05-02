@@ -19,4 +19,6 @@ public interface IPatientService
 
     // Doctor
     Task UpdateDoctorInfo(int id, UpdateDoctorDto dto);
+
+    Task DischargeAsync(int patientId);
 }

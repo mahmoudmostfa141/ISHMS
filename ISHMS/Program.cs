@@ -143,8 +143,17 @@ var builder = WebApplication.CreateBuilder(args);
 //department, bed
             builder.Services.AddScoped<IBedService, BedService>();
             builder.Services.AddScoped<IDepartmentService, DepartmentService>();
+             builder.Services.AddScoped<NewsService>();
+//ward, room, bed
+           //builder.Services.AddScoped<WardService>();
+            //builder.Services.AddScoped<RoomService>();
+            builder.Services.AddScoped<BedService>();
+            builder.Services.AddScoped<IPatientTaskService, PatientTaskService>();
+            builder.Services.AddScoped<IAlertService, AlertService>();
+            builder.Services.AddScoped<IWorkflowService, WorkflowService>();
+            builder.Services.AddScoped<IMedicalReportService, MedicalReportService>();
 
-var app = builder.Build();
+            var app = builder.Build();
 
 
   

@@ -94,4 +94,11 @@ public class PatientController : ControllerBase
         await _service.UpdateDoctorInfo(id, dto);
         return Ok("Doctor info updated successfully");
     }
+    // POST api/patient/discharge/{patientId}
+    [HttpPost("discharge/{patientId}")]
+    public async Task<IActionResult> Discharge(int patientId)
+    {
+        await _service.DischargeAsync(patientId);
+        return Ok("Patient discharged successfully");
+    }
 }

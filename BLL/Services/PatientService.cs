@@ -1,6 +1,7 @@
 ﻿using ISHMS.Core.Constants.Enums;
 using ISHMS.Core.DTOs;
 using ISHMS.Core.DTOs.Patient;
+using ISHMS.Core.Enums;
 using ISHMS.Core.Interfaces;
 using ISHMS.Core.Models;
 using ISHMS.DAL;
@@ -12,11 +13,12 @@ public class PatientService : IPatientService
 {
     private readonly AppDbContext _context;
     private readonly NewsService _newsService;
-
-    public PatientService(AppDbContext context, NewsService newsService)
+    private readonly IWorkflowService _workflowService;
+    public PatientService(AppDbContext context, NewsService newsService, IWorkflowService workflowService )
     {
         _context = context;
         _newsService = newsService;
+        _workflowService = workflowService;
     }
 
     // ✅ Receptionist — Create Patient + Assign Bed
@@ -122,6 +124,47 @@ public class PatientService : IPatientService
         patient.CurrentStatus = result.status;
 
         await _context.SaveChangesAsync();
+
+
+        // ✅ Workflow Logic
+        if (patient.FlowStatus == PatientFlowStatus.New)
+        {
+            // أول Vitals دايماً → UnderObservation
+            await _workflowService.AdvanceAsync(
+                patient.Id,
+                PatientFlowStatus.UnderObservation);
+        }
+        else if (patient.FlowStatus == PatientFlowStatus.UnderObservation)
+        {
+            if (result.score >= 7)
+            {
+                // Red → WaitingDoctor
+                await _workflowService.AdvanceAsync(
+                    patient.Id,
+                    PatientFlowStatus.WaitingDoctor);
+            }
+            else if (result.score <= 2)
+            {
+                // Green → ObservationalStable
+                await _workflowService.AdvanceAsync(
+                    patient.Id,
+                    PatientFlowStatus.ObservationalStable);
+            }
+            // Yellow (3-6)  UnderObservation
+        }
+        else if (patient.FlowStatus == PatientFlowStatus.ObservationalStable
+                 && result.score >= 7)
+        {
+            // كان Green وحالته اتدهورت → WaitingDoctor
+            await _workflowService.AdvanceAsync(
+                patient.Id,
+                PatientFlowStatus.WaitingDoctor);
+        }
+
+        // ✅ Bed Logic
+        // 🔥 Check Available Bed
+        var freeBed = await _context.Beds
+            .FirstOrDefaultAsync(b => !b.IsOccupied);
     }
 
     // ✅ Doctor — تحديث العلاج الحالي
@@ -133,5 +176,30 @@ public class PatientService : IPatientService
         p.CurrentTreatment = dto.CurrentTreatment;
 
         await _context.SaveChangesAsync();
+    }
+    public async Task DischargeAsync(int patientId)
+    {
+        var patient = await _context.Patients.FindAsync(patientId);
+
+        if (patient == null)
+            throw new Exception("Patient not found");
+
+        if (patient.FlowStatus != PatientFlowStatus.Stable)
+            throw new Exception(
+                $"Cannot discharge patient. Current status: {patient.FlowStatus}. Patient must be Stable first.");
+
+        await _workflowService.AdvanceAsync(
+            patientId,
+            PatientFlowStatus.Discharged);
+
+        var bed = await _context.Beds
+            .FirstOrDefaultAsync(b => b.PatientId == patientId);
+
+        if (bed != null)
+        {
+            bed.IsOccupied = false;
+            bed.PatientId = null;
+            await _context.SaveChangesAsync();
+        }
     }
 }

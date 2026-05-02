@@ -1,4 +1,5 @@
 ﻿using ISHMS.Core.Constants.Enums;
+using ISHMS.Core.Enums;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
@@ -34,4 +35,10 @@ public class Patient
 
     // ✅ مضافة — Navigation Property للـ VitalSigns
     public ICollection<VitalSign> VitalSigns { get; set; } = new List<VitalSign>();
+
+    public PatientFlowStatus FlowStatus { get; set; } = PatientFlowStatus.New;
+
+    public ICollection<PatientTask>? Tasks { get; set; }      // ✅ جديد
+    public ICollection<Alert>? Alerts { get; set; }           // ✅ جديد
+    public ICollection<MedicalReport>? MedicalReports { get; set; } // ✅ جديد
 }
