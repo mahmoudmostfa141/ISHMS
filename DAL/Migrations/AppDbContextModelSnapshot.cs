@@ -157,11 +157,8 @@ namespace ISHMS.DAL.Migrations
                     b.ToTable("Beds");
                 });
 
-<<<<<<< HEAD
             modelBuilder.Entity("ISHMS.Core.Models.Department", b =>
-=======
             modelBuilder.Entity("ISHMS.Core.Models.MedicalReport", b =>
->>>>>>> Backup-Mohammed
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -169,9 +166,8 @@ namespace ISHMS.DAL.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
-<<<<<<< HEAD
-                    b.Property<string>("Name")
-=======
+                    b.Property<string>("Name");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
@@ -190,22 +186,18 @@ namespace ISHMS.DAL.Migrations
                         .HasColumnType("int");
 
                     b.Property<string>("TreatmentPlan")
->>>>>>> Backup-Mohammed
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
 
-<<<<<<< HEAD
                     b.ToTable("Departments");
-=======
                     b.HasIndex("DoctorId");
 
                     b.HasIndex("PatientId");
 
                     b.ToTable("MedicalReports");
->>>>>>> Backup-Mohammed
-                });
+                }));
 
             modelBuilder.Entity("ISHMS.Core.Models.Patient", b =>
                 {
@@ -525,7 +517,6 @@ namespace ISHMS.DAL.Migrations
                     b.Navigation("Room");
                 });
 
-<<<<<<< HEAD
             modelBuilder.Entity("ISHMS.Core.Models.Patient", b =>
                 {
                     b.HasOne("ISHMS.Core.Models.Bed", "Bed")
@@ -533,144 +524,142 @@ namespace ISHMS.DAL.Migrations
                         .HasForeignKey("ISHMS.Core.Models.Patient", "BedId");
 
                     b.Navigation("Bed");
-=======
-            modelBuilder.Entity("ISHMS.Core.Models.MedicalReport", b =>
-                {
-                    b.HasOne("ISHMS.Core.Models.ApplicationUser", "Doctor")
-                        .WithMany()
-                        .HasForeignKey("DoctorId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                    modelBuilder.Entity("ISHMS.Core.Models.MedicalReport", b =>
+                        {
+                            b.HasOne("ISHMS.Core.Models.ApplicationUser", "Doctor")
+                                .WithMany()
+                                .HasForeignKey("DoctorId")
+                                .OnDelete(DeleteBehavior.Restrict)
+                                .IsRequired();
 
-                    b.HasOne("ISHMS.Core.Models.Patient", "Patient")
-                        .WithMany("MedicalReports")
-                        .HasForeignKey("PatientId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                            b.HasOne("ISHMS.Core.Models.Patient", "Patient")
+                                .WithMany("MedicalReports")
+                                .HasForeignKey("PatientId")
+                                .OnDelete(DeleteBehavior.Cascade)
+                                .IsRequired();
 
-                    b.Navigation("Doctor");
+                            b.Navigation("Doctor");
 
-                    b.Navigation("Patient");
-                });
+                            b.Navigation("Patient");
+                        });
 
-            modelBuilder.Entity("ISHMS.Core.Models.PatientTask", b =>
-                {
-                    b.HasOne("ISHMS.Core.Models.ApplicationUser", "AssignedToUser")
-                        .WithMany()
-                        .HasForeignKey("AssignedToUserId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                    modelBuilder.Entity("ISHMS.Core.Models.PatientTask", b =>
+                        {
+                            b.HasOne("ISHMS.Core.Models.ApplicationUser", "AssignedToUser")
+                                .WithMany()
+                                .HasForeignKey("AssignedToUserId")
+                                .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("ISHMS.Core.Models.Patient", "Patient")
-                        .WithMany("Tasks")
-                        .HasForeignKey("PatientId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                            b.HasOne("ISHMS.Core.Models.Patient", "Patient")
+                                .WithMany("Tasks")
+                                .HasForeignKey("PatientId")
+                                .OnDelete(DeleteBehavior.Cascade)
+                                .IsRequired();
 
-                    b.Navigation("AssignedToUser");
+                            b.Navigation("AssignedToUser");
 
-                    b.Navigation("Patient");
->>>>>>> Backup-Mohammed
-                });
+                            b.Navigation("Patient");
+                        });
 
-            modelBuilder.Entity("ISHMS.Core.Models.Room", b =>
-                {
-                    b.HasOne("ISHMS.Core.Models.Department", "Department")
-                        .WithMany("Rooms")
-                        .HasForeignKey("DepartmentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                    modelBuilder.Entity("ISHMS.Core.Models.Room", b =>
+                        {
+                            b.HasOne("ISHMS.Core.Models.Department", "Department")
+                                .WithMany("Rooms")
+                                .HasForeignKey("DepartmentId")
+                                .OnDelete(DeleteBehavior.Cascade)
+                                .IsRequired();
 
-                    b.Navigation("Department");
-                });
+                            b.Navigation("Department");
+                        });
 
-            modelBuilder.Entity("ISHMS.Core.Models.VitalSign", b =>
-                {
-                    b.HasOne("ISHMS.Core.Models.Patient", "Patient")
-                        .WithMany("VitalSigns")
-                        .HasForeignKey("PatientId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                    modelBuilder.Entity("ISHMS.Core.Models.VitalSign", b =>
+                        {
+                            b.HasOne("ISHMS.Core.Models.Patient", "Patient")
+                                .WithMany("VitalSigns")
+                                .HasForeignKey("PatientId")
+                                .OnDelete(DeleteBehavior.Cascade)
+                                .IsRequired();
 
-                    b.Navigation("Patient");
-                });
+                            b.Navigation("Patient");
+                        });
 
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
-                {
-                    b.HasOne("Microsoft.AspNetCore.Identity.IdentityRole", null)
-                        .WithMany()
-                        .HasForeignKey("RoleId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
+                    modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
+                        {
+                            b.HasOne("Microsoft.AspNetCore.Identity.IdentityRole", null)
+                                .WithMany()
+                                .HasForeignKey("RoleId")
+                                .OnDelete(DeleteBehavior.Cascade)
+                                .IsRequired();
+                        });
 
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserClaim<string>", b =>
-                {
-                    b.HasOne("ISHMS.Core.Models.ApplicationUser", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
+                    modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserClaim<string>", b =>
+                        {
+                            b.HasOne("ISHMS.Core.Models.ApplicationUser", null)
+                                .WithMany()
+                                .HasForeignKey("UserId")
+                                .OnDelete(DeleteBehavior.Cascade)
+                                .IsRequired();
+                        });
 
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserLogin<string>", b =>
-                {
-                    b.HasOne("ISHMS.Core.Models.ApplicationUser", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
+                    modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserLogin<string>", b =>
+                        {
+                            b.HasOne("ISHMS.Core.Models.ApplicationUser", null)
+                                .WithMany()
+                                .HasForeignKey("UserId")
+                                .OnDelete(DeleteBehavior.Cascade)
+                                .IsRequired();
+                        });
 
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserRole<string>", b =>
-                {
-                    b.HasOne("Microsoft.AspNetCore.Identity.IdentityRole", null)
-                        .WithMany()
-                        .HasForeignKey("RoleId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                    modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserRole<string>", b =>
+                        {
+                            b.HasOne("Microsoft.AspNetCore.Identity.IdentityRole", null)
+                                .WithMany()
+                                .HasForeignKey("RoleId")
+                                .OnDelete(DeleteBehavior.Cascade)
+                                .IsRequired();
 
-                    b.HasOne("ISHMS.Core.Models.ApplicationUser", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
+                            b.HasOne("ISHMS.Core.Models.ApplicationUser", null)
+                                .WithMany()
+                                .HasForeignKey("UserId")
+                                .OnDelete(DeleteBehavior.Cascade)
+                                .IsRequired();
+                        });
 
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserToken<string>", b =>
-                {
-                    b.HasOne("ISHMS.Core.Models.ApplicationUser", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
+                    modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserToken<string>", b =>
+                        {
+                            b.HasOne("ISHMS.Core.Models.ApplicationUser", null)
+                                .WithMany()
+                                .HasForeignKey("UserId")
+                                .OnDelete(DeleteBehavior.Cascade)
+                                .IsRequired();
+                        });
 
-            modelBuilder.Entity("ISHMS.Core.Models.Bed", b =>
-                {
-                    b.Navigation("Patient");
-                });
+                    modelBuilder.Entity("ISHMS.Core.Models.Bed", b =>
+                        {
+                            b.Navigation("Patient");
+                        });
 
-            modelBuilder.Entity("ISHMS.Core.Models.Department", b =>
-                {
-                    b.Navigation("Rooms");
-                });
+                    modelBuilder.Entity("ISHMS.Core.Models.Department", b =>
+                        {
+                            b.Navigation("Rooms");
+                        });
 
-            modelBuilder.Entity("ISHMS.Core.Models.Patient", b =>
-                {
-                    b.Navigation("Alerts");
+                    modelBuilder.Entity("ISHMS.Core.Models.Patient", b =>
+                        {
+                            b.Navigation("Alerts");
 
-                    b.Navigation("MedicalReports");
+                            b.Navigation("MedicalReports");
 
-                    b.Navigation("Tasks");
+                            b.Navigation("Tasks");
 
-                    b.Navigation("VitalSigns");
-                });
+                            b.Navigation("VitalSigns");
+                        });
 
-            modelBuilder.Entity("ISHMS.Core.Models.Room", b =>
-                {
-                    b.Navigation("Beds");
-                });
+                    modelBuilder.Entity("ISHMS.Core.Models.Room", b =>
+                        {
+                            b.Navigation("Beds");
+                        });
 #pragma warning restore 612, 618
+                });
         }
-    }
-}
+    } }
