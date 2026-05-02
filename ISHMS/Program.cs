@@ -144,7 +144,10 @@ var builder = WebApplication.CreateBuilder(args);
            builder.Services.AddScoped<WardService>();
             builder.Services.AddScoped<RoomService>();
             builder.Services.AddScoped<BedService>();
-
+builder.Services.AddScoped<IPatientTaskService, PatientTaskService>();
+builder.Services.AddScoped<IAlertService, AlertService>();
+builder.Services.AddScoped<IWorkflowService, WorkflowService>();
+builder.Services.AddScoped<IMedicalReportService, MedicalReportService>();
 
 var app = builder.Build();
 

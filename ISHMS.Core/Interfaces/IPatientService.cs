@@ -10,4 +10,5 @@ public interface IPatientService
     Task Update(int id, UpdatePatientDto dto);
     Task Delete(int id);
     Task AddVital(CreateVitalDto dto);
+    Task DischargeAsync(int patientId);
 }

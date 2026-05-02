@@ -74,4 +74,11 @@ public class PatientController : ControllerBase
         await _service.AddVital(dto);
         return Ok("Vital Added");
     }
+    // POST api/patient/discharge/{patientId}
+    [HttpPost("discharge/{patientId}")]
+    public async Task<IActionResult> Discharge(int patientId)
+    {
+        await _service.DischargeAsync(patientId);
+        return Ok("Patient discharged successfully");
+    }
 }

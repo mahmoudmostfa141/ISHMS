@@ -23,4 +23,10 @@ public class Patient
     public int NewsScore { get; set; }
     public ICollection<VitalSign>? VitalSigns { get; set; }
     public DateTime AdmittedAt { get; set; }
+
+    public PatientFlowStatus FlowStatus { get; set; } = PatientFlowStatus.New;
+
+    public ICollection<PatientTask>? Tasks { get; set; }      // ✅ جديد
+    public ICollection<Alert>? Alerts { get; set; }           // ✅ جديد
+    public ICollection<MedicalReport>? MedicalReports { get; set; } // ✅ جديد
 }
