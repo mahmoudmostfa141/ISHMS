@@ -73,4 +73,26 @@ public class BedService : IBedService
             })
             .ToListAsync();
     }
+    // كل الأسرّة المشغولة مع بيانات المريض
+    public async Task<List<OccupiedBedDto>> GetOccupiedBeds()
+    {
+        return await _context.Beds
+            .Include(b => b.Room)
+                .ThenInclude(r => r.Department)
+            .Include(b => b.Patient)
+            .Where(b => b.IsOccupied && b.Patient != null)
+            .Select(b => new OccupiedBedDto
+            {
+                BedId = b.Id,
+                RoomNumber = b.Room.RoomNumber,
+                DepartmentName = b.Room.Department.Name,
+                PatientId = b.Patient!.Id,
+                PatientName = b.Patient.FullName,
+                Age = b.Patient.Age,
+                FlowStatus = b.Patient.FlowStatus.ToString(),
+                NewsScore = b.Patient.NewsScore,
+                AdmittedAt = b.Patient.AdmittedAt
+            })
+            .ToListAsync();
+    }
 }

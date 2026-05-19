@@ -152,8 +152,9 @@ var builder = WebApplication.CreateBuilder(args);
             builder.Services.AddScoped<IAlertService, AlertService>();
             builder.Services.AddScoped<IWorkflowService, WorkflowService>();
             builder.Services.AddScoped<IMedicalReportService, MedicalReportService>();
-
-            var app = builder.Build();
+            // Drug Interaction — Cloudflare Tunnel
+            builder.Services.AddHttpClient<IDrugInteractionService, DrugInteractionService>();
+var app = builder.Build();
 
 
   
