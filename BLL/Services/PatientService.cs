@@ -151,7 +151,7 @@ public class PatientService : IPatientService
         patient.CurrentStatus = result.status;
 
         await _context.SaveChangesAsync();
-
+        await _context.Entry(patient).ReloadAsync();
         // ✅ Workflow Logic بناءً على FlowStatus + NEWS Score
         var currentFlow = patient.FlowStatus;
 
