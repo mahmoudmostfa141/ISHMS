@@ -101,4 +101,15 @@ public class PatientController : ControllerBase
         await _service.DischargeAsync(patientId);
         return Ok("Patient discharged successfully");
     }
+
+    
+    // Doctor فحص تفاعل الأدوية السابقة مع العلاج الجديد
+    
+    [HttpGet("{id}/medication/check")]
+    [Authorize(Roles = "Doctor,Admin")]
+    public async Task<IActionResult> CheckDrugInteraction(int id)
+    {
+        var result = await _service.CheckDrugInteraction(id);
+        return Ok(result);
+    }
 }

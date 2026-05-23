@@ -42,4 +42,13 @@ public class BedController : ControllerBase
         var beds = await _service.GetAvailableBedsByDepartment(departmentId);
         return Ok(beds);
     }
+
+    // ✅ الأسرّة المشغولة مع بيانات المرضى
+    [HttpGet("occupied")]
+    [Authorize(Roles = "Receptionist,Admin,Doctor,Nurse")]
+    public async Task<IActionResult> GetOccupiedBeds()
+    {
+        var beds = await _service.GetOccupiedBeds();
+        return Ok(beds);
+    }
 }

@@ -8,4 +8,5 @@ public interface IBedService
     Task AssignPatient(AssignBedDto dto);
     Task<List<AvailableBedDto>> GetAvailableBeds();
     Task<List<AvailableBedDto>> GetAvailableBedsByDepartment(int departmentId);
+    Task<List<OccupiedBedDto>> GetOccupiedBeds();
 }
