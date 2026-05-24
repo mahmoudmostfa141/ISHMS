@@ -1,4 +1,5 @@
-﻿using ISHMS.Core.DTOs;
+﻿using ISHMS.BLL.Services;
+using ISHMS.Core.DTOs;
 using ISHMS.Core.DTOs.Patient;
 using ISHMS.Core.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -110,6 +111,26 @@ public class PatientController : ControllerBase
     public async Task<IActionResult> CheckDrugInteraction(int id)
     {
         var result = await _service.CheckDrugInteraction(id);
+        return Ok(result);
+    }
+
+    [HttpPut("vital/{id}")]
+    [Authorize(Roles = "Nurse")]
+    public async Task<IActionResult> UpdateVital(int id, [FromBody] UpdateVitalSignDto dto)
+    {
+        var result = await _service.UpdateVitalSignAsync(id, dto);
+        if (!result)
+            return NotFound("Vital sign not found");
+
+        return Ok("Vital signs updated successfully");
+    }
+
+
+    [HttpGet("{id}/isbar")]
+    [Authorize(Roles = "Nurse,Doctor")]
+    public async Task<IActionResult> GenerateIsbar(int id)
+    {
+        var result = await _service.GenerateIsbarAsync(id);
         return Ok(result);
     }
 }

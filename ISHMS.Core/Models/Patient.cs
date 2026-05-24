@@ -38,7 +38,7 @@ public class Patient
 
     public PatientFlowStatus FlowStatus { get; set; } = PatientFlowStatus.New;
 
-    public ICollection<PatientTask>? Tasks { get; set; }      // ✅ جديد
-    public ICollection<Alert>? Alerts { get; set; }           // ✅ جديد
-    public ICollection<MedicalReport>? MedicalReports { get; set; } // ✅ جديد
+    public ICollection<PatientTask>? Tasks { get; set; }      // جديد
+    public ICollection<Alert>? Alerts { get; set; }           //  جديد
+    public ICollection<MedicalReport>? MedicalReports { get; set; } //  جديد
 }

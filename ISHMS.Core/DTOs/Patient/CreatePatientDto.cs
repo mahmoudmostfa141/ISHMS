@@ -1,4 +1,6 @@
-﻿public class CreatePatientDto
+﻿namespace ISHMS.Core.DTOs.Patient;
+
+public class CreatePatientDto
 {
     public string FullName { get; set; }
     public int Age { get; set; }

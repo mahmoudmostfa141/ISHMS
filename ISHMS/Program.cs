@@ -1,20 +1,21 @@
 
-using System;
 using BLL.Services;
 using Core.Interfaces;
+using Core.Settings;
 using DAL.Repositories;
+using ISHMS.API.Seeding;
+using ISHMS.BLL.Services;
 using ISHMS.Core.Interfaces;
+using ISHMS.Core.Models;
 using ISHMS.DAL;
 using ISHMS.DAL.Repositories;
-using Microsoft.EntityFrameworkCore;
-using Core.Settings;
-using ISHMS.Core.Models;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using System;
 using System.Text;
-using ISHMS.BLL.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -154,6 +155,10 @@ var builder = WebApplication.CreateBuilder(args);
             builder.Services.AddScoped<IMedicalReportService, MedicalReportService>();
             // Drug Interaction — Cloudflare Tunnel
             builder.Services.AddHttpClient<IDrugInteractionService, DrugInteractionService>();
+// Seeders
+builder.Services.AddTransient<TestPatientSeeder>();
+
+
 var app = builder.Build();
 
 
@@ -224,6 +229,12 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
+if (app.Environment.IsDevelopment())
+{
+    using var scope = app.Services.CreateScope();
+    var seeder = scope.ServiceProvider.GetRequiredService<TestPatientSeeder>();
+    await seeder.SeedAsync();
+}
 // Middleware
 if (app.Environment.IsDevelopment())
             {

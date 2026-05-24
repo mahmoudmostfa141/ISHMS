@@ -66,13 +66,38 @@ public class PatientService : IPatientService
     }
 
     // ✅ Get All
-    public async Task<List<PatientResponseDto>> GetAll()
+    public async Task<List<PatientListResponseDto>> GetAll()
     {
-        var data = await _context.Patients
-            .Include(p => p.VitalSigns)
+        return await _context.Patients
+            .Select(p => new PatientListResponseDto
+            {
+                Id = p.Id,
+                FullName = p.FullName,
+                Age = p.Age,
+                DateOfBirth = p.DateOfBirth,
+                AdmittedAt = p.AdmittedAt,
+                Status = p.CurrentStatus.ToString(),
+                NewsScore = p.NewsScore,
+                FlowStatus = p.FlowStatus.ToString(),
+                Background = p.Background,
+                PreviousMedications = p.PreviousMedications,
+                CurrentTreatment = p.CurrentTreatment,
+                BedId = p.BedId,
+                LatestVitalSign = p.VitalSigns
+                    .OrderByDescending(v => v.RecordedAt)
+                    .Select(v => new VitalSignDto
+                    {
+                        HeartRate = v.HeartRate,
+                        OxygenLevel = v.OxygenLevel,
+                        Temperature = v.Temperature,
+                        SystolicPressure = v.SystolicPressure,
+                        DiastolicPressure = v.DiastolicPressure,
+                        RespirationRate = v.RespirationRate,
+                        RecordedAt = v.RecordedAt
+                    })
+                    .FirstOrDefault()
+            })
             .ToListAsync();
-
-        return data.Select(PatientMapper.ToDto).ToList();
     }
 
     // ✅ Get By Id
@@ -251,5 +276,78 @@ public class PatientService : IPatientService
             .ToList();
 
         return await _drugService.CheckAsync(currentMeds, patient.CurrentTreatment);
+    }
+
+
+
+    // ✅ Nurse — تحديث VitalSigns 
+
+    public async Task<bool> UpdateVitalSignAsync(int vitalId, UpdateVitalSignDto dto)
+    {
+        var vital = await _context.VitalSigns.FindAsync(vitalId);
+        if (vital == null)
+            return false;
+
+        vital.HeartRate = dto.HeartRate;
+        vital.OxygenLevel = dto.OxygenLevel;
+        vital.Temperature = dto.Temperature;
+        vital.SystolicPressure = dto.SystolicPressure;
+        vital.DiastolicPressure = dto.DiastolicPressure;
+        vital.RespirationRate = dto.RespirationRate;
+        vital.RecordedAt = DateTime.UtcNow;
+
+        await _context.SaveChangesAsync();
+        return true;
+    }
+
+    //  ISBAR Generation
+    public async Task<IsbarResponseDto> GenerateIsbarAsync(int patientId)
+    {
+        var patient = await _context.Patients
+            .Include(p => p.VitalSigns)
+            .FirstOrDefaultAsync(p => p.Id == patientId);
+
+        if (patient == null)
+            throw new Exception("Patient not found");
+
+        var latestVital = patient.VitalSigns
+            .OrderByDescending(v => v.RecordedAt)
+            .FirstOrDefault();
+
+        if (latestVital == null)
+            throw new Exception("No vital signs found for this patient");
+
+        var identify =
+            $"This is the nurse/doctor handover for Patient_{patient.Id}" +
+            $"{(patient.BedId.HasValue ? $" in Bed {patient.BedId}" : "")}.";
+
+        var situation =
+            $"Patient_{patient.Id} is currently {patient.CurrentStatus} with NEWS score {patient.NewsScore} " +
+            $"and flow status {patient.FlowStatus}.";
+
+        var background =
+            $"Patient is {patient.Age} years old, admitted at {patient.AdmittedAt:yyyy-MM-dd HH:mm}. " +
+            $"History: {patient.Background ?? "No background recorded"}. " +
+            $"Previous medications: {patient.PreviousMedications ?? "No previous medications recorded"}.";
+
+        var assessment =
+            $"Latest vitals: HR {latestVital.HeartRate}, BP {latestVital.SystolicPressure}/{latestVital.DiastolicPressure}, " +
+            $"O2 Sat {latestVital.OxygenLevel}%, Temp {latestVital.Temperature}C, RR {latestVital.RespirationRate}. " +
+            $"Current treatment: {patient.CurrentTreatment ?? "No treatment recorded"}.";
+
+        var recommendation = patient.NewsScore >= 7
+            ? "Urgent doctor review is required. Prepare for escalation."
+            : patient.NewsScore >= 3
+                ? "Continue close monitoring and reassess vital signs."
+                : "Continue routine monitoring.";
+
+        return new IsbarResponseDto
+        {
+            Identify = identify,
+            Situation = situation,
+            Background = background,
+            Assessment = assessment,
+            Recommendation = recommendation
+        };
     }
 }

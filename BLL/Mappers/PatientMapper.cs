@@ -29,6 +29,7 @@ public static class PatientMapper
         AdmittedAt = p.AdmittedAt,
         Status = p.CurrentStatus.ToString(),
         NewsScore = p.NewsScore,
+        FlowStatus = p.FlowStatus.ToString(),
         Background = p.Background,
         PreviousMedications = p.PreviousMedications,
         CurrentTreatment = p.CurrentTreatment,

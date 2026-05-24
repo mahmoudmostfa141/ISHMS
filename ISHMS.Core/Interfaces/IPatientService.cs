@@ -10,7 +10,9 @@ public interface IPatientService
     Task<PatientResponseDto> Create(CreatePatientDto dto);
 
     // All
-    Task<List<PatientResponseDto>> GetAll();
+    Task<List<PatientListResponseDto>> GetAll();
+    
+    
     Task<PatientResponseDto?> GetById(int id);
     Task Delete(int id);
 
@@ -25,5 +27,10 @@ public interface IPatientService
 
     //Drug
     Task<List<DrugInteractionResultDto>> CheckDrugInteraction(int patientId);
+    //  تحديث الأدوية الحالية للمريض
+    Task<bool> UpdateVitalSignAsync(int vitalId, UpdateVitalSignDto dto);
+
+    // ISBAR
+    Task<IsbarResponseDto> GenerateIsbarAsync(int patientId);
 
 }
