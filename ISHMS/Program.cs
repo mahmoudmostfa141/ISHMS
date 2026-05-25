@@ -145,7 +145,6 @@ builder.Services.AddScoped<IBedService, BedService>();
 builder.Services.AddScoped<IDepartmentService, DepartmentService>();
 builder.Services.AddScoped<NewsService>();
 //ward, room, bed
-
 //builder.Services.AddScoped<WardService>();
 //builder.Services.AddScoped<RoomService>();
 builder.Services.AddScoped<BedService>();
@@ -153,29 +152,13 @@ builder.Services.AddScoped<IPatientTaskService, PatientTaskService>();
 builder.Services.AddScoped<IAlertService, AlertService>();
 builder.Services.AddScoped<IWorkflowService, WorkflowService>();
 builder.Services.AddScoped<IMedicalReportService, MedicalReportService>();
+builder.Services.AddScoped<IAnalyticsService, AnalyticsService>();
+
+
 builder.Services.AddHttpClient<IDrugInteractionService, DrugInteractionService>();
-
-
-
-
-
-builder.Services.AddCors(options =>
-{
-options.AddPolicy("AllowAll",
-policy =>
-{
-    policy.AllowAnyOrigin()
-          .AllowAnyHeader()
-          .AllowAnyMethod();
-});
-});
-
+//seeder
+builder.Services.AddScoped<HospitalSeeder>();
 var app = builder.Build();
-
-
-
-
-
 
 // Seed Roles first time
 
@@ -241,7 +224,18 @@ using (var scope = app.Services.CreateScope())
         }
     }
 }
+//seed
+if (app.Environment.IsDevelopment())
+{
+    using (var scope = app.Services.CreateScope())
+    {
+        var services = scope.ServiceProvider;
 
+        var seeder = services.GetRequiredService<HospitalSeeder>();
+
+        await seeder.SeedAsync();
+    }
+}
 // Middleware
 //if (app.Environment.IsDevelopment())
 //{
