@@ -14,7 +14,7 @@ public class VitalSign
     public Patient Patient { get; set; }
 
     public int HeartRate { get; set; }
-    public int OxygenLevel { get; set; }
+    public double OxygenLevel { get; set; }
     public double Temperature { get; set; }
 
     public int SystolicPressure { get; set; }

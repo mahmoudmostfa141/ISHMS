@@ -1,20 +1,21 @@
 
-using System;
 using BLL.Services;
 using Core.Interfaces;
+using Core.Settings;
 using DAL.Repositories;
+using ISHMS.API.Seeding;
+using ISHMS.BLL.Services;
 using ISHMS.Core.Interfaces;
+using ISHMS.Core.Models;
 using ISHMS.DAL;
 using ISHMS.DAL.Repositories;
-using Microsoft.EntityFrameworkCore;
-using Core.Settings;
-using ISHMS.Core.Models;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using System;
 using System.Text;
-using ISHMS.BLL.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -145,9 +146,11 @@ builder.Services.AddScoped<IBedService, BedService>();
 builder.Services.AddScoped<IDepartmentService, DepartmentService>();
 builder.Services.AddScoped<NewsService>();
 //ward, room, bed
+
+
 //builder.Services.AddScoped<WardService>();
 //builder.Services.AddScoped<RoomService>();
-builder.Services.AddScoped<BedService>();
+//builder.Services.AddScoped<BedService>();
 builder.Services.AddScoped<IPatientTaskService, PatientTaskService>();
 builder.Services.AddScoped<IAlertService, AlertService>();
 builder.Services.AddScoped<IWorkflowService, WorkflowService>();
@@ -158,6 +161,24 @@ builder.Services.AddScoped<IAnalyticsService, AnalyticsService>();
 builder.Services.AddHttpClient<IDrugInteractionService, DrugInteractionService>();
 //seeder
 builder.Services.AddScoped<HospitalSeeder>();
+builder.Services.AddTransient<TestPatientSeeder>();
+
+
+
+
+
+
+builder.Services.AddCors(options =>
+{
+options.AddPolicy("AllowAll",
+policy =>
+{
+    policy.AllowAnyOrigin()
+          .AllowAnyHeader()
+          .AllowAnyMethod();
+});
+});
+
 var app = builder.Build();
 
 // Seed Roles first time
@@ -236,6 +257,12 @@ if (app.Environment.IsDevelopment())
         await seeder.SeedAsync();
     }
 }
+//if (app.Environment.IsDevelopment())
+//{
+//    using var scope = app.Services.CreateScope();
+//    var seeder = scope.ServiceProvider.GetRequiredService<TestPatientSeeder>();
+//    await seeder.SeedAsync();
+//}
 // Middleware
 //if (app.Environment.IsDevelopment())
 //{

@@ -1,4 +1,4 @@
-﻿namespace ISHMS.Core.DTOs;
+﻿namespace ISHMS.Core.DTOs.Patient;
 
 public class UpdatePatientDto
 {

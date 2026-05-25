@@ -2,6 +2,7 @@
 {
     public class AuthResponseDto
     {
+        public string? Id { get; set; }
         public bool IsAuthenticated { get; set; }
         public string Message { get; set; } = string.Empty;
         public string? Token { get; set; }
