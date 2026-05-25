@@ -16,7 +16,7 @@ namespace ISHMS.Core.DTOs.Analytics
     {
         public DateTime RecordedAt { get; set; }
 
-        public int OxygenSaturation { get; set; }
+        public double OxygenSaturation { get; set; }
 
         public int HeartRate { get; set; }
 
