@@ -1,5 +1,7 @@
-﻿using ISHMS.Core.DTOs;
+﻿using ISHMS.Core.Constants;
+using ISHMS.Core.DTOs;
 using ISHMS.Core.DTOs.Alert;
+using ISHMS.Core.Enums;
 using ISHMS.Core.Interfaces;
 using ISHMS.Core.Models;
 using ISHMS.DAL;
@@ -7,13 +9,17 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ISHMS.BLL.Services;
 
+
 public class AlertService : IAlertService
 {
     private readonly AppDbContext _context;
+    private readonly IHubService _hubService;
 
-    public AlertService(AppDbContext context)
+
+    public AlertService(AppDbContext context, IHubService hubService)
     {
         _context = context;
+        _hubService = hubService;
     }
 
     // ==================== Create ====================
@@ -29,6 +35,15 @@ public class AlertService : IAlertService
             Severity = dto.Severity,
             IsRead = false
         };
+        var patientName = await _context.Alerts.Where(a => a.PatientId == dto.PatientId).Select(a => a.Patient.FullName).FirstOrDefaultAsync();
+        await _hubService.SendAlertAsync(
+                   dto.PatientId,
+                   patientName,
+                   dto.TargetRole,
+                   dto.TargetUserId,
+                   dto.Message,
+                   dto.Severity.ToString()
+               );
 
         await _context.Alerts.AddAsync(alert);
         await _context.SaveChangesAsync();

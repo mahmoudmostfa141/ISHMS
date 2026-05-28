@@ -17,17 +17,20 @@ public class PatientService : IPatientService
     private readonly NewsService _newsService;
     private readonly IWorkflowService _workflowService;
     private readonly IDrugInteractionService _drugService;
+    private readonly IHubService _hubService;
 
     public PatientService(
         AppDbContext context,
         NewsService newsService,
         IWorkflowService workflowService,
-        IDrugInteractionService drugService)
+        IDrugInteractionService drugService,
+        IHubService hubService) 
     {
         _context = context;
         _newsService = newsService;
         _workflowService = workflowService;
         _drugService = drugService;
+        _hubService = hubService; 
     }
 
     // ✅ Receptionist — Create Patient + Assign Bed
@@ -176,6 +179,14 @@ public class PatientService : IPatientService
         patient.CurrentStatus = result.status;
 
         await _context.SaveChangesAsync();
+        // ✅ جديد — بعت NEWS Score Update
+        await _hubService.SendNewsScoreUpdateAsync(
+            patient.Id,
+            patient.FullName,
+            result.score,
+            result.status.ToString()
+        );
+
         await _context.Entry(patient).ReloadAsync();
         // ✅ Workflow Logic بناءً على FlowStatus + NEWS Score
         var currentFlow = patient.FlowStatus;

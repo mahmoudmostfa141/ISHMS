@@ -11,13 +11,16 @@ public class MedicalReportService : IMedicalReportService
 {
     private readonly AppDbContext _context;
     private readonly IWorkflowService _workflowService;
+    private readonly IHubService _hubService;
 
     public MedicalReportService(
         AppDbContext context,
-        IWorkflowService workflowService)
+        IWorkflowService workflowService,
+        IHubService hubService)
     {
         _context = context;
         _workflowService = workflowService;
+        _hubService = hubService;
     }
 
     public async Task CreateAsync(CreateMedicalReportDto dto, string doctorId)
@@ -64,6 +67,13 @@ public class MedicalReportService : IMedicalReportService
 
         await _context.MedicalReports.AddAsync(report);
         await _context.SaveChangesAsync();
+
+        await _hubService.SendMedicalReportAsync(
+        dto.PatientId,
+        patient.FullName,
+        doctor.FullName,
+        dto.ReportType.ToString()
+        );
 
         switch (dto.ReportType)
         {

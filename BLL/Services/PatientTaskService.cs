@@ -1,4 +1,5 @@
-﻿using ISHMS.Core.DTOs;
+﻿using ISHMS.Core.Constants;
+using ISHMS.Core.DTOs;
 using ISHMS.Core.DTOs.Task;
 using ISHMS.Core.Enums;
 using ISHMS.Core.Interfaces;
@@ -11,10 +12,12 @@ namespace ISHMS.BLL.Services;
 public class PatientTaskService : IPatientTaskService
 {
     private readonly AppDbContext _context;
+    private readonly IHubService _hubService;
 
-    public PatientTaskService(AppDbContext context)
+    public PatientTaskService(AppDbContext context, IHubService hubService)
     {
         _context = context;
+        _hubService = hubService;
     }
 
     // ==================== Create ====================
@@ -30,7 +33,15 @@ public class PatientTaskService : IPatientTaskService
             Description = dto.Description,
             Status = PatientTaskStatus.Pending
         };
-
+        var patientName = await _context.PatientTasks.Where(t => t.PatientId == dto.PatientId).Select(t => t.Patient.FullName).FirstOrDefaultAsync();
+        await _hubService.SendTaskAsync(
+                   dto.PatientId,
+                   patientName,
+                   dto.AssignedToRole,
+                   dto.AssignedToUserId,
+                   dto.Title,
+                   dto.Description
+               );
         await _context.PatientTasks.AddAsync(task);
         await _context.SaveChangesAsync();
     }

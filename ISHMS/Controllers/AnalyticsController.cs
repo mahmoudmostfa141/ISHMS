@@ -1,11 +1,13 @@
 ﻿using ISHMS.BLL.Services;
 using ISHMS.Core.DTOs.Analytics;
 using ISHMS.Core.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace ISHMS.API.Controllers
 {
+    [Authorize(Roles = "Admin")]
     [Route("api/[controller]")]
     [ApiController]
     public class AnalyticsController : ControllerBase

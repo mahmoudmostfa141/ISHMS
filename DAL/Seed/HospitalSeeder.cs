@@ -5,48 +5,12 @@ using ISHMS.Core.Models;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
-/// <summary>
-/// Seeds the database with a realistic, consistent hospital dataset for Demo and Data Analysis.
-///
-/// IMPORTANT NOTES:
-/// ─────────────────────────────────────────────────────────────────────────────
-/// • Departments are NOT seeded here — the backend already seeds 4 fixed departments.
-/// • No manual IDs are assigned to any entity (DB uses Identity/Auto-Increment).
-/// • This seeder does NOT invoke WorkflowService, AlertService, or any API.
-///   It writes data directly to the DB for demo/analysis purposes only.
-/// • Two separate status fields on every Patient — never mixed up:
-///
-///     PatientStatus   (CurrentStatus field)
-///     ═══════════════════════════════════════
-///     Represents the MEDICAL condition of the patient.
-///     Values: Stable | Unstable | Critical
-///     Derived from: NEWS score
-///       NEWS 0-3  →  PatientStatus.Stable
-///       NEWS 4-6  →  PatientStatus.Unstable
-///       NEWS 7+   →  PatientStatus.Critical
-///
-///     PatientFlowStatus   (FlowStatus field)
-///     ═══════════════════════════════════════
-///     Represents the WORKFLOW STAGE inside the hospital system.
-///     Values: New | UnderObservation | WaitingDoctor | UnderTreatment
-///             | ObservationalStable | Stable | Discharged
-///     Derived from: NEWS band (which group the patient belongs to)
-///       NEWS 0-3  →  FlowStatus.ObservationalStable  (low-risk, being monitored)
-///       NEWS 4-6  →  FlowStatus.UnderObservation      (borderline, close watch)
-///       NEWS 7+   →  FlowStatus.WaitingDoctor          (critical, needs doctor)
-///       Exited    →  FlowStatus.Stable                 (cleared for discharge)
-///
-///     NOTE: "Green/Yellow/Red/DarkRed/Mild" are INTERNAL Seeder labels only.
-///     They define vital-sign ranges and map to NEWS scores.
-///     They are NOT PatientStatus values and are never stored in the DB.
-/// ─────────────────────────────────────────────────────────────────────────────
-/// </summary>
 public class HospitalSeeder
 {
     private readonly AppDbContext _context;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly RoleManager<IdentityRole> _roleManager;
-    private readonly Random _rng = new(42); // fixed → reproducible
+    private readonly Random _rng = new(20260526);
 
     public HospitalSeeder(
         AppDbContext context,
@@ -58,659 +22,646 @@ public class HospitalSeeder
         _roleManager = roleManager;
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // ENTRY POINT
-    // ════════════════════════════════════════════════════════════════════════
-
     public async Task SeedAsync()
     {
-        // Guard: run only once.
-        // Departments already exist (seeded by backend) so we check Patients instead.
-        if (await _context.Patients.AnyAsync()) return;
-
-        // ── 1. Roles & Users ────────────────────────────────────────────────
         await SeedRolesAsync();
-        var users = await SeedUsersAsync();
-        var doctors = users.Where(u => u.role == AppRoles.Doctor).Select(u => u.user).ToList();
-        var nurses = users.Where(u => u.role == AppRoles.Nurse).Select(u => u.user).ToList();
+        var staff = await SeedUsersAsync();
 
-        // ── 2. Rooms & Beds (linked to the existing 4 Departments) ──────────
-        var departments = await _context.Departments.ToListAsync(); // load existing ones
-        var rooms = SeedRooms(departments);
-        await _context.Rooms.AddRangeAsync(rooms);
-        await _context.SaveChangesAsync();
-        // EF has now populated room.Id via Identity
+        if (await _context.Patients.AnyAsync())
+            return;
 
-        var beds = SeedBeds(rooms);
-        await _context.Beds.AddRangeAsync(beds);
-        await _context.SaveChangesAsync();
-        // EF has now populated bed.Id via Identity
+        await EnsureHospitalLayoutAsync();
 
-        // ── 3. Patients ──────────────────────────────────────────────────────
-        // Each patient is built around a SCENARIO that defines:
-        //   • A vital-sign profile  (the "ground truth")
-        //   • A NEWS score computed from those vitals
-        //   • A FlowStatus derived from that NEWS score
-        //   • A PatientStatus derived from that NEWS score
-        var patients = SeedPatients(beds);
-        await _context.Patients.AddRangeAsync(patients);
-        await _context.SaveChangesAsync();
+        var beds = await _context.Beds
+            .Include(b => b.Room)
+                .ThenInclude(r => r.Department)
+            .OrderBy(b => b.Room.Department.Name)
+            .ThenBy(b => b.Room.RoomNumber)
+            .ThenBy(b => b.Id)
+            .ToListAsync();
 
-        // Mark beds as occupied for patients still in hospital.
-        // Uses FlowStatus (workflow stage) — NOT PatientStatus (medical severity).
-        // FlowStatus.Stable = cleared for discharge but still occupying a bed.
-        // Only the "hasExited" scenario group has no bed assigned at all.
-        foreach (var p in patients.Where(p => p.BedId.HasValue &&
-                                               p.FlowStatus != PatientFlowStatus.Discharged))
+        foreach (var bed in beds)
         {
-            var bed = beds.First(b => b.Id == p.BedId!.Value);
-            bed.IsOccupied = true;
-            bed.PatientId = p.Id;
+            bed.IsOccupied = false;
+            bed.PatientId = null;
         }
+
+        var scenarios = BuildPatientScenarios(beds);
+        await _context.Patients.AddRangeAsync(scenarios.Select(s => s.Patient));
         await _context.SaveChangesAsync();
 
-        // ── 4. Vitals ────────────────────────────────────────────────────────
-        var vitals = SeedVitalSigns(patients);
+        foreach (var scenario in scenarios.Where(s => s.AssignedBed != null))
+        {
+            scenario.AssignedBed!.IsOccupied = true;
+            scenario.AssignedBed.PatientId = scenario.Patient.Id;
+        }
+
+        await _context.SaveChangesAsync();
+
+        var vitals = scenarios
+            .SelectMany(s => s.Vitals.Select(v => new VitalSign
+            {
+                PatientId = s.Patient.Id,
+                HeartRate = v.HeartRate,
+                OxygenLevel = v.OxygenLevel,
+                Temperature = v.Temperature,
+                SystolicPressure = v.SystolicPressure,
+                DiastolicPressure = v.DiastolicPressure,
+                RespirationRate = v.RespirationRate,
+                RecordedAt = v.RecordedAt
+            }))
+            .OrderBy(v => v.RecordedAt)
+            .ToList();
+
         await _context.VitalSigns.AddRangeAsync(vitals);
         await _context.SaveChangesAsync();
 
-        // ── 5. Alerts ────────────────────────────────────────────────────────
-        var alerts = SeedAlerts(patients, doctors, nurses);
+        var alerts = BuildAlerts(scenarios, staff);
         await _context.Alerts.AddRangeAsync(alerts);
         await _context.SaveChangesAsync();
 
-        // ── 6. Tasks ─────────────────────────────────────────────────────────
-        var tasks = SeedPatientTasks(patients, alerts, doctors, nurses);
+        var tasks = BuildTasks(scenarios, staff);
         await _context.PatientTasks.AddRangeAsync(tasks);
         await _context.SaveChangesAsync();
 
-        // ── 7. Medical Reports ───────────────────────────────────────────────
-        var reports = SeedMedicalReports(patients, doctors);
+        var reports = BuildMedicalReports(scenarios, staff.Doctors);
         await _context.MedicalReports.AddRangeAsync(reports);
         await _context.SaveChangesAsync();
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // ROLES
-    // ════════════════════════════════════════════════════════════════════════
-
     private async Task SeedRolesAsync()
     {
-        foreach (var role in new[] { AppRoles.Admin, AppRoles.Doctor,
-                                     AppRoles.Nurse,  AppRoles.Receptionist })
+        foreach (var role in new[] { AppRoles.Admin, AppRoles.Doctor, AppRoles.Nurse, AppRoles.Receptionist })
         {
             if (!await _roleManager.RoleExistsAsync(role))
                 await _roleManager.CreateAsync(new IdentityRole(role));
         }
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // USERS
-    // ════════════════════════════════════════════════════════════════════════
-
-    private async Task<List<(ApplicationUser user, string role)>> SeedUsersAsync()
+    private async Task<StaffSet> SeedUsersAsync()
     {
-        var seed = new (string name, string email, string pass, string role)[]
+        var users = new[]
         {
-            ("Admin User",         "admin@ishms.com",         "Admin@12345",  AppRoles.Admin),
-            ("Dr. Ahmed Karim",    "dr.ahmed@ishms.com",      "Doctor@12345", AppRoles.Doctor),
-            ("Dr. Sara Hassan",    "dr.sara@ishms.com",       "Doctor@12345", AppRoles.Doctor),
-            ("Dr. Omar Nasser",    "dr.omar@ishms.com",       "Doctor@12345", AppRoles.Doctor),
-            ("Nurse Fatima Ali",   "nurse.fatima@ishms.com",  "Nurse@12345",  AppRoles.Nurse),
-            ("Nurse Layla Samir",  "nurse.layla@ishms.com",   "Nurse@12345",  AppRoles.Nurse),
-            ("Nurse Hassan Zaki",  "nurse.hassan@ishms.com",  "Nurse@12345",  AppRoles.Nurse),
-            ("Rec. Dina Farouk",   "rec.dina@ishms.com",      "Rec@123456",   AppRoles.Receptionist),
+            new SeedUser("System Admin", "admin@ishms.com", "Admin123", AppRoles.Admin),
+            new SeedUser("Dr. Laila Mansour", "dr.laila@ishms.com", "Doctor123", AppRoles.Doctor),
+            new SeedUser("Dr. Omar Haddad", "dr.omar@ishms.com", "Doctor123", AppRoles.Doctor),
+            new SeedUser("Dr. Nadia Karim", "dr.nadia@ishms.com", "Doctor123", AppRoles.Doctor),
+            new SeedUser("Dr. Youssef Salem", "dr.youssef@ishms.com", "Doctor123", AppRoles.Doctor),
+            new SeedUser("Dr. Mariam Fathy", "dr.mariam@ishms.com", "Doctor123", AppRoles.Doctor),
+            new SeedUser("Dr. Karim Nasser", "dr.karim@ishms.com", "Doctor123", AppRoles.Doctor),
+            new SeedUser("Nurse Hanan Ali", "nurse.hanan@ishms.com", "Nurse123", AppRoles.Nurse),
+            new SeedUser("Nurse Mostafa Zaki", "nurse.mostafa@ishms.com", "Nurse123", AppRoles.Nurse),
+            new SeedUser("Nurse Farida Samir", "nurse.farida@ishms.com", "Nurse123", AppRoles.Nurse),
+            new SeedUser("Nurse Ahmed Tarek", "nurse.ahmed@ishms.com", "Nurse123", AppRoles.Nurse),
+            new SeedUser("Nurse Salma Adel", "nurse.salma@ishms.com", "Nurse123", AppRoles.Nurse),
+            new SeedUser("Nurse Mina George", "nurse.mina@ishms.com", "Nurse123", AppRoles.Nurse),
+            new SeedUser("Nurse Reem Hassan", "nurse.reem@ishms.com", "Nurse123", AppRoles.Nurse),
+            new SeedUser("Nurse Yara Ibrahim", "nurse.yara@ishms.com", "Nurse123", AppRoles.Nurse),
+            new SeedUser("Receptionist Dina Farouk", "reception.dina@ishms.com", "Reception123", AppRoles.Receptionist),
+            new SeedUser("Receptionist Hossam Amin", "reception.hossam@ishms.com", "Reception123", AppRoles.Receptionist),
+            new SeedUser("Receptionist Nour Selim", "reception.nour@ishms.com", "Reception123", AppRoles.Receptionist)
         };
 
-        var result = new List<(ApplicationUser, string)>();
+        var result = new List<(ApplicationUser User, string Role)>();
 
-        foreach (var (name, email, pass, role) in seed)
+        foreach (var seed in users)
         {
-            var existing = await _userManager.FindByEmailAsync(email);
-            if (existing != null)
+            var user = await _userManager.FindByEmailAsync(seed.Email);
+            if (user == null)
             {
-                result.Add((existing, role));
+                user = new ApplicationUser
+                {
+                    FullName = seed.FullName,
+                    Email = seed.Email,
+                    UserName = seed.Email,
+                    EmailConfirmed = true,
+                    CreatedAt = DateTime.UtcNow.AddDays(-30)
+                };
+
+                var created = await _userManager.CreateAsync(user, seed.Password);
+                if (!created.Succeeded)
+                    throw new InvalidOperationException(string.Join("; ", created.Errors.Select(e => e.Description)));
+            }
+
+            if (!await _userManager.IsInRoleAsync(user, seed.Role))
+                await _userManager.AddToRoleAsync(user, seed.Role);
+
+            result.Add((user, seed.Role));
+        }
+
+        return new StaffSet(
+            result.Where(x => x.Role == AppRoles.Admin).Select(x => x.User).ToList(),
+            result.Where(x => x.Role == AppRoles.Doctor).Select(x => x.User).ToList(),
+            result.Where(x => x.Role == AppRoles.Nurse).Select(x => x.User).ToList(),
+            result.Where(x => x.Role == AppRoles.Receptionist).Select(x => x.User).ToList());
+    }
+
+    private async Task EnsureHospitalLayoutAsync()
+    {
+        var departmentNames = new[] { "Cardiology", "Neurology", "Emergency", "ICU" };
+
+        foreach (var name in departmentNames)
+        {
+            if (!await _context.Departments.AnyAsync(d => d.Name == name))
+                await _context.Departments.AddAsync(new Department { Name = name });
+        }
+
+        await _context.SaveChangesAsync();
+
+        var departments = await _context.Departments
+            .Include(d => d.Rooms)
+                .ThenInclude(r => r.Beds)
+            .Where(d => departmentNames.Contains(d.Name))
+            .ToListAsync();
+
+        foreach (var department in departments)
+        {
+            if (!department.Rooms.Any())
+            {
+                for (var roomNumber = 1; roomNumber <= 10; roomNumber++)
+                {
+                    var room = new Room
+                    {
+                        DepartmentId = department.Id,
+                        RoomNumber = $"{department.Name}-{roomNumber}"
+                    };
+
+                    for (var bedNumber = 1; bedNumber <= 5; bedNumber++)
+                        room.Beds.Add(new Bed { IsOccupied = false });
+
+                    await _context.Rooms.AddAsync(room);
+                }
+
                 continue;
             }
 
-            var user = new ApplicationUser { FullName = name, Email = email, UserName = email };
-            var ok = await _userManager.CreateAsync(user, pass);
-            if (ok.Succeeded)
+            foreach (var room in department.Rooms.Where(r => !r.Beds.Any()))
             {
-                await _userManager.AddToRoleAsync(user, role);
-                result.Add((user, role));
+                for (var bedNumber = 1; bedNumber <= 5; bedNumber++)
+                    await _context.Beds.AddAsync(new Bed { RoomId = room.Id, IsOccupied = false });
             }
         }
-        return result;
+
+        await _context.SaveChangesAsync();
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // ROOMS  (no manual Id — EF assigns via Identity)
-    // ════════════════════════════════════════════════════════════════════════
-
-    private List<Room> SeedRooms(List<Department> departments)
+    private List<PatientScenario> BuildPatientScenarios(List<Bed> beds)
     {
-        var rooms = new List<Room>();
-        foreach (var dept in departments)
-            for (int i = 1; i <= 3; i++)
-                rooms.Add(new Room
-                {
-                    // Id intentionally omitted — auto-increment
-                    RoomNumber = $"{dept.Name[..3].ToUpper()}-{i:00}",
-                    DepartmentId = dept.Id
-                });
-        return rooms;
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // BEDS  (no manual Id)
-    // ════════════════════════════════════════════════════════════════════════
-
-    private List<Bed> SeedBeds(List<Room> rooms)
-    {
-        var beds = new List<Bed>();
-        foreach (var room in rooms)
-            for (int i = 1; i <= 4; i++)        // 4 beds per room
-                beds.Add(new Bed { RoomId = room.Id, IsOccupied = false });
-        return beds;
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // PATIENTS  — scenario-driven, fully consistent
-    // ════════════════════════════════════════════════════════════════════════
-
-    // Each scenario defines the vital-sign profile first.
-    // NEWS score and all statuses are DERIVED from those vitals — never guessed.
-
-    private static readonly string[] FirstNames =
-        { "Ahmed","Mohamed","Sara","Fatima","Omar","Layla",
-          "Hassan","Nour","Khaled","Amira","Youssef","Hana",
-          "Ibrahim","Rania","Tariq","Dina","Mahmoud","Aya",
-          "Karim","Mona","Tarek","Salma","Faris","Nada" };
-
-    private static readonly string[] LastNames =
-        { "Al-Rashidi","Mansour","El-Sayed","Hassan","Karim",
-          "Nasser","Ibrahim","Farouk","Zaki","Othman","Tawfik","Barakat" };
-
-    private static readonly string[] Diagnoses =
-        { "Acute Myocardial Infarction","Pneumonia","Stroke",
-          "Sepsis","COPD Exacerbation","Post-op Recovery",
-          "Hypertensive Crisis","Diabetic Ketoacidosis",
-          "Pulmonary Embolism","Heart Failure","Renal Failure",
-          "Liver Cirrhosis","Asthma Exacerbation","GI Bleeding" };
-
-    private List<Patient> SeedPatients(List<Bed> beds)
-    {
-        var patients = new List<Patient>();
+        var scenarios = new List<PatientScenario>();
         var availableBeds = beds.ToList();
 
-        // ── Scenario definitions ─────────────────────────────────────────────
-        //
-        // Each scenario is defined by a vitalBand (internal Seeder label only).
-        // From that band we generate realistic Vitals → compute NEWS → derive
-        // BOTH statuses independently:
-        //
-        //   PatientStatus  (medical severity)  — computed by NewsToPatientStatus()
-        //   PatientFlowStatus (workflow stage) — fixed per scenario below
-        //
-        // The two are SEPARATE fields.  NewsToPatientStatus() maps:
-        //   NEWS 0-3  →  PatientStatus.Stable
-        //   NEWS 4-6  →  PatientStatus.Unstable
-        //   NEWS 7+   →  PatientStatus.Critical
-        //
-        // PatientFlowStatus per scenario:
-        //   vitalBand "Green"   → NEWS 0-3  → FlowStatus.ObservationalStable
-        //   vitalBand "Yellow"  → NEWS 3-6  → FlowStatus.UnderObservation
-        //   vitalBand "Red"     → NEWS 7-9  → FlowStatus.WaitingDoctor
-        //   vitalBand "DarkRed" → NEWS 10+  → FlowStatus.WaitingDoctor
-        //   vitalBand "Mild"    → NEWS 1-3  → FlowStatus.Stable (exiting patients)
-        //
-        // "Green/Yellow/Red/DarkRed/Mild" are NOT PatientStatus values.
-        // They are private range labels inside this Seeder only.
+        AddScenarios(scenarios, availableBeds, RiskBand.Low, PatientFlowStatus.ObservationalStable, 12, false);
+        AddScenarios(scenarios, availableBeds, RiskBand.Low, PatientFlowStatus.Stable, 8, false);
+        AddScenarios(scenarios, availableBeds, RiskBand.Low, PatientFlowStatus.Discharged, 6, false);
+        AddScenarios(scenarios, availableBeds, RiskBand.Medium, PatientFlowStatus.UnderObservation, 18, false);
+        AddScenarios(scenarios, availableBeds, RiskBand.Medium, PatientFlowStatus.UnderTreatment, 8, false);
+        AddScenarios(scenarios, availableBeds, RiskBand.Critical, PatientFlowStatus.WaitingDoctor, 10, true);
+        AddScenarios(scenarios, availableBeds, RiskBand.Critical, PatientFlowStatus.UnderTreatment, 3, false);
 
-        var scenarios = new (int count, string vitalBand, PatientFlowStatus flowStatus, bool hasExited)[]
+        return scenarios;
+    }
+
+    private void AddScenarios(
+        List<PatientScenario> scenarios,
+        List<Bed> availableBeds,
+        RiskBand riskBand,
+        PatientFlowStatus flowStatus,
+        int count,
+        bool allowDeterioration)
+    {
+        for (var i = 0; i < count; i++)
         {
-            // NEWS 0-3 → PatientStatus.Stable   + FlowStatus.ObservationalStable
-            (12, "Green",   PatientFlowStatus.ObservationalStable, false),
+            var patientCase = PickCase(riskBand);
+            var deteriorated = allowDeterioration && i % 3 == 0;
+            var vitals = BuildVitalSeries(riskBand, patientCase, deteriorated, flowStatus);
+            var latest = vitals[^1];
+            var newsScore = CalculateNews(latest);
+            var age = _rng.Next(19, 88);
+            var admittedAt = BuildAdmissionTime(flowStatus);
+            var assignedBed = flowStatus == PatientFlowStatus.Discharged
+                ? null
+                : TakeBed(availableBeds, patientCase.DepartmentName);
 
-            // NEWS 3-6 → PatientStatus.Unstable + FlowStatus.UnderObservation
-            (10, "Yellow",  PatientFlowStatus.UnderObservation,    false),
+            var patient = new Patient
+            {
+                FullName = BuildPatientName(),
+                Age = age,
+                DateOfBirth = DateTime.Today.AddYears(-age).AddDays(-_rng.Next(0, 365)),
+                AdmittedAt = admittedAt,
+                CurrentStatus = NewsToPatientStatus(newsScore),
+                NewsScore = newsScore,
+                FlowStatus = flowStatus,
+                Background = BuildBackground(patientCase, riskBand, deteriorated),
+                PreviousMedications = patientCase.PreviousMedications,
+                CurrentTreatment = BuildCurrentTreatment(patientCase, riskBand, flowStatus),
+                BedId = assignedBed?.Id
+            };
 
-            // NEWS 7-9 → PatientStatus.Critical + FlowStatus.WaitingDoctor
-            ( 8, "Red",     PatientFlowStatus.WaitingDoctor,        false),
+            scenarios.Add(new PatientScenario(patient, patientCase, riskBand, flowStatus, deteriorated, vitals, assignedBed));
+        }
+    }
 
-            // NEWS 10+ → PatientStatus.Critical + FlowStatus.WaitingDoctor
-            ( 4, "DarkRed", PatientFlowStatus.WaitingDoctor,        false),
+    private DateTime BuildAdmissionTime(PatientFlowStatus flowStatus)
+    {
+        var preferredHours = new[] { 6, 8, 9, 10, 14, 17, 19, 22 };
+        var daysBack = flowStatus == PatientFlowStatus.Discharged
+            ? _rng.Next(2, 12)
+            : _rng.Next(0, 8);
 
-            // NEWS 1-3 → PatientStatus.Stable   + FlowStatus.Stable (cleared, no bed)
-            (16, "Mild",    PatientFlowStatus.Stable,               true),
+        var admittedAt = DateTime.UtcNow.Date
+            .AddDays(-daysBack)
+            .AddHours(preferredHours[_rng.Next(preferredHours.Length)])
+            .AddMinutes(_rng.Next(0, 50));
+
+        return admittedAt > DateTime.UtcNow.AddHours(-4)
+            ? admittedAt.AddDays(-1)
+            : admittedAt;
+    }
+
+    private Bed? TakeBed(List<Bed> availableBeds, string departmentName)
+    {
+        var candidates = availableBeds
+            .Where(b => b.Room.Department.Name == departmentName)
+            .ToList();
+
+        if (!candidates.Any())
+            candidates = availableBeds.ToList();
+
+        if (!candidates.Any())
+            return null;
+
+        var bed = candidates[_rng.Next(candidates.Count)];
+        availableBeds.Remove(bed);
+        return bed;
+    }
+
+    private List<VitalReading> BuildVitalSeries(
+        RiskBand finalRisk,
+        ClinicalCase patientCase,
+        bool deteriorated,
+        PatientFlowStatus flowStatus)
+    {
+        var count = _rng.Next(8, 16);
+        var end = flowStatus == PatientFlowStatus.Discharged
+            ? DateTime.UtcNow.AddHours(-_rng.Next(8, 48)).AddMinutes(-_rng.Next(0, 60))
+            : DateTime.UtcNow.AddMinutes(-_rng.Next(5, 90));
+
+        var start = end.AddHours(-_rng.Next(40, 72));
+        var intervalMinutes = Math.Max(45, (end - start).TotalMinutes / Math.Max(1, count - 1));
+        var vitals = new List<VitalReading>();
+
+        for (var i = 0; i < count; i++)
+        {
+            var stageRisk = finalRisk;
+
+            if (deteriorated)
+            {
+                if (i < count / 2)
+                    stageRisk = RiskBand.Low;
+                else if (i < count - 2)
+                    stageRisk = RiskBand.Medium;
+            }
+            else if (finalRisk == RiskBand.Medium && i < 2)
+            {
+                stageRisk = RiskBand.Low;
+            }
+            else if (finalRisk == RiskBand.Critical && i < 2)
+            {
+                stageRisk = RiskBand.Medium;
+            }
+
+            var recordedAt = start.AddMinutes(intervalMinutes * i).AddMinutes(_rng.Next(-8, 9));
+            if (i == 0)
+                recordedAt = start;
+            if (i == count - 1)
+                recordedAt = end;
+
+            vitals.Add(GenerateVitalForBand(stageRisk, patientCase, recordedAt));
+        }
+
+        return vitals.OrderBy(v => v.RecordedAt).ToList();
+    }
+
+    private VitalReading GenerateVitalForBand(RiskBand riskBand, ClinicalCase patientCase, DateTime recordedAt)
+    {
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            var vital = GenerateVital(riskBand, patientCase, recordedAt);
+            if (MatchesRiskBand(CalculateNews(vital), riskBand))
+                return vital;
+        }
+
+        return riskBand switch
+        {
+            RiskBand.Low => new VitalReading(82, 98, 36.8, 122, 76, 16, recordedAt),
+            RiskBand.Medium => new VitalReading(104, 93, 37.8, 116, 74, 22, recordedAt),
+            _ => new VitalReading(132, 90, 39.2, 88, 60, 28, recordedAt)
+        };
+    }
+
+    private static bool MatchesRiskBand(int newsScore, RiskBand riskBand) =>
+        riskBand switch
+        {
+            RiskBand.Low => newsScore <= 3,
+            RiskBand.Medium => newsScore is >= 4 and <= 6,
+            _ => newsScore >= 7
         };
 
-        foreach (var (count, vitalBand, flowStatus, hasExited) in scenarios)
-        {
-            for (int i = 0; i < count; i++)
-            {
-                var name = $"{FirstNames[_rng.Next(FirstNames.Length)]} " +
-                                 $"{LastNames[_rng.Next(LastNames.Length)]}";
-                var age = _rng.Next(22, 85);
-                var admittedAt = DateTime.UtcNow
-                                         .AddDays(-_rng.Next(1, 45))
-                                         .AddHours(-_rng.Next(0, 23));
-
-                // Step 1: generate vitals for this band (the ground truth)
-                var repVital = GenerateRepresentativeVital(vitalBand);
-
-                // Step 2: compute NEWS from those exact vitals
-                var newsScore = CalculateNews(repVital);
-
-                // Step 3: derive PatientStatus (medical severity) from NEWS
-                // This is SEPARATE from FlowStatus (workflow stage).
-                var medicalStatus = NewsToPatientStatus(newsScore);
-
-                // Step 4: FlowStatus (workflow stage) comes from the scenario —
-                // already validated to be consistent with the NEWS band above.
-
-                int? bedId = null;
-                if (!hasExited && availableBeds.Any())
-                {
-                    var bed = availableBeds[_rng.Next(availableBeds.Count)];
-                    bedId = bed.Id;
-                    availableBeds.Remove(bed);
-                }
-
-                patients.Add(new Patient
-                {
-                    // Id omitted — auto-increment
-                    FullName = name,
-                    Age = age,
-                    DateOfBirth = DateTime.Today.AddYears(-age),
-                    AdmittedAt = admittedAt,
-                    CurrentStatus = medicalStatus,  // PatientStatus enum — from NEWS
-                    NewsScore = newsScore,        // computed from vitals
-                    FlowStatus = flowStatus,       // PatientFlowStatus enum — from scenario
-                    Background = Diagnoses[_rng.Next(Diagnoses.Length)],
-                    PreviousMedications = PickMedications(),
-                    CurrentTreatment = PickTreatment(vitalBand),
-                    BedId = bedId
-                });
-            }
-        }
-        return patients;
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // VITAL SIGN RANGES  per band
-    // ════════════════════════════════════════════════════════════════════════
-
-    // Each band guarantees the vital signs will produce a NEWS score
-    // in the expected range when CalculateNews() is called.
-    //
-    //  Band      HR        O2       Temp      SysBP    DiaBP    RR      Expected NEWS
-    //  ──────────────────────────────────────────────────────────────────────────────
-    //  Green     60-85     96-99    36.1-37.2  110-130  70-85   12-16   0-2
-    //  Mild      70-90     95-97    36.5-37.4  115-135  72-88   13-17   1-3
-    //  Yellow    90-110    93-95    37.5-38.4  140-165  88-100  18-22   3-6
-    //  Red       111-130   89-92    38.5-39.0  165-185  100-110 22-26   7-9
-    //  DarkRed   131-160   80-88    39.1-40.2  185-220  110-130 26-32   10-14
-
-    private record VitalReading(int HR, int O2, double Temp, int SysBP, int DiaBP, int RR);
-
-    private VitalReading GenerateRepresentativeVital(string band) => band switch
+    private VitalReading GenerateVital(RiskBand riskBand, ClinicalCase patientCase, DateTime recordedAt)
     {
-        "Green" => new(Ri(60, 85), Ri(96, 99), Rd(36.1, 37.2), Ri(110, 130), Ri(70, 85), Ri(12, 16)),
-        "Mild" => new(Ri(70, 90), Ri(95, 97), Rd(36.5, 37.4), Ri(115, 135), Ri(72, 88), Ri(13, 17)),
-        "Yellow" => new(Ri(90, 110), Ri(93, 95), Rd(37.5, 38.4), Ri(140, 165), Ri(88, 100), Ri(18, 22)),
-        "Red" => new(Ri(111, 130), Ri(89, 92), Rd(38.5, 39.0), Ri(165, 185), Ri(100, 110), Ri(22, 26)),
-        "DarkRed" => new(Ri(131, 160), Ri(80, 88), Rd(39.1, 40.2), Ri(185, 220), Ri(110, 130), Ri(26, 32)),
-        _ => new(75, 98, 36.8, 120, 78, 16)
-    };
-
-    // ════════════════════════════════════════════════════════════════════════
-    // NEWS SCORE CALCULATOR  (mirrors NewsService.Calculate exactly)
-    // ════════════════════════════════════════════════════════════════════════
-
-    private static int CalculateNews(VitalReading v)
-    {
-        int score = 0;
-
-        // Oxygen
-        if (v.O2 <= 91) score += 3;
-        else if (v.O2 <= 93) score += 2;
-        else if (v.O2 <= 95) score += 1;
-
-        // Heart Rate
-        if (v.HR >= 131) score += 3;
-        else if (v.HR >= 111) score += 2;
-        else if (v.HR >= 91) score += 1;
-
-        // Temperature
-        if (v.Temp >= 39) score += 2;
-        else if (v.Temp <= 35) score += 3;
-
-        // Blood Pressure
-        if (v.SysBP <= 90) score += 3;
-        else if (v.SysBP <= 100) score += 2;
-
-        // Respiration
-        if (v.RR >= 25) score += 3;
-        else if (v.RR >= 21) score += 2;
-
-        return score;
-    }
-
-    private static PatientStatus NewsToPatientStatus(int news) =>
-        news >= 7 ? PatientStatus.Critical :
-        news >= 4 ? PatientStatus.Unstable :
-                    PatientStatus.Stable;
-
-    // ════════════════════════════════════════════════════════════════════════
-    // VITAL SIGNS  — time-series, consistent with patient's band
-    // ════════════════════════════════════════════════════════════════════════
-
-    private List<VitalSign> SeedVitalSigns(List<Patient> patients)
-    {
-        var vitals = new List<VitalSign>();
-
-        foreach (var patient in patients)
+        var vital = riskBand switch
         {
-            // Determine which band this patient belongs to based on FlowStatus + NEWS
-            var band = PatientToBand(patient);
+            RiskBand.Low => new VitalReading(
+                HeartRate: Ri(68, 91),
+                OxygenLevel: Ri(96, 100),
+                Temperature: Rd(36.3, 37.4),
+                SystolicPressure: Ri(108, 134),
+                DiastolicPressure: Ri(66, 86),
+                RespirationRate: Ri(12, 19),
+                RecordedAt: recordedAt),
 
-            var start = patient.AdmittedAt;
-            // FlowStatus (workflow stage) determines the time window for vitals.
-            // PatientStatus (medical severity) is NOT used here — FlowStatus is.
-            var end = (patient.FlowStatus == PatientFlowStatus.Stable)
-                ? patient.AdmittedAt.AddDays(_rng.Next(3, 10))   // exited: fixed window
-                : DateTime.UtcNow;                                 // admitted: up to now
+            RiskBand.Medium => new VitalReading(
+                HeartRate: Ri(96, 119),
+                OxygenLevel: Ri(92, 95),
+                Temperature: Rd(37.2, 38.8),
+                SystolicPressure: Ri(101, 128),
+                DiastolicPressure: Ri(64, 86),
+                RespirationRate: Ri(21, 25),
+                RecordedAt: recordedAt),
 
-            // Deterioration applies only to Critical patients (PatientStatus.Critical,
-            // which corresponds to NEWS ≥ 7 and FlowStatus.WaitingDoctor).
-            bool deteriorating = patient.NewsScore >= 7;
-            var current = start;
-
-            while (current <= end)
-            {
-                double elapsed = (current - start).TotalDays;
-
-                // Small progressive shift: critical patients worsen, stable patients stay flat
-                double shift = deteriorating ? Math.Min(elapsed * 0.04, 0.25) : 0;
-
-                var v = GenerateRepresentativeVital(band);
-
-                // Apply deterioration shift (worsens each vital slightly over time)
-                var hr = v.HR + (int)(shift * 12);
-                var o2 = v.O2 - (int)(shift * 6);
-                var temp = v.Temp + shift * 0.3;
-                var sysBP = v.SysBP + (int)(shift * 10);
-                var diaBP = v.DiaBP + (int)(shift * 6);
-                var rr = v.RR + (int)(shift * 4);
-
-                // Add small random jitter (±5% of typical range) — stays within band
-                vitals.Add(new VitalSign
-                {
-                    // Id omitted — auto-increment
-                    PatientId = patient.Id,
-                    HeartRate = Clamp(hr + Ri(-4, 4), 30, 200),
-                    OxygenLevel = Clamp(o2 - Ri(0, 2), 50, 100),
-                    Temperature = ClampD(temp + Rd(-0.2, 0.2), 33.0, 42.0),
-                    SystolicPressure = Clamp(sysBP + Ri(-6, 6), 60, 240),
-                    DiastolicPressure = Clamp(diaBP + Ri(-4, 4), 40, 140),
-                    RespirationRate = Clamp(rr + Ri(-1, 1), 8, 40),
-                    RecordedAt = current
-                });
-
-                current = current.AddHours(3).AddMinutes(_rng.Next(-10, 10));
-            }
-        }
-        return vitals;
-    }
-
-    // Map patient back to a vital band so time-series vitals stay consistent
-    private static string PatientToBand(Patient p) =>
-        p.NewsScore switch
-        {
-            <= 2 => "Green",
-            <= 3 => "Mild",
-            <= 6 => "Yellow",
-            <= 9 => "Red",
-            _ => "DarkRed"
+            _ => new VitalReading(
+                HeartRate: Ri(116, 142),
+                OxygenLevel: Ri(87, 92),
+                Temperature: Rd(38.7, 39.8),
+                SystolicPressure: Ri(82, 101),
+                DiastolicPressure: Ri(50, 76),
+                RespirationRate: Ri(25, 33),
+                RecordedAt: recordedAt)
         };
 
-    // ════════════════════════════════════════════════════════════════════════
-    // ALERTS  — driven by patient severity, NOT per vital reading
-    // ════════════════════════════════════════════════════════════════════════
-    // We don't loop over every vital to avoid generating thousands of alerts.
-    // Instead, each critical patient gets a realistic set of alerts that match
-    // their condition. Stable patients get zero or one informational alert.
+        return patientCase.Code switch
+        {
+            "COPD" or "ASTHMA" => vital with
+            {
+                OxygenLevel = ClampD(vital.OxygenLevel - (riskBand == RiskBand.Low ? 0 : 2), 82, 100),
+                RespirationRate = Clamp(vital.RespirationRate + 2, 10, 36)
+            },
+            "SEPSIS" => vital with
+            {
+                Temperature = riskBand == RiskBand.Low ? vital.Temperature : ClampD(vital.Temperature + 0.3, 36.0, 40.2),
+                SystolicPressure = riskBand == RiskBand.Critical ? Clamp(vital.SystolicPressure - 6, 75, 240) : vital.SystolicPressure
+            },
+            "ACS" => vital with
+            {
+                HeartRate = Clamp(vital.HeartRate + 6, 45, 170),
+                SystolicPressure = riskBand == RiskBand.Critical ? Clamp(vital.SystolicPressure + 18, 75, 220) : vital.SystolicPressure
+            },
+            "STROKE" => vital with
+            {
+                SystolicPressure = Clamp(vital.SystolicPressure + 18, 90, 220),
+                HeartRate = Clamp(vital.HeartRate + 3, 45, 170)
+            },
+            _ => vital
+        };
+    }
 
-    private List<Alert> SeedAlerts(
-        List<Patient> patients,
-        List<ApplicationUser> doctors,
-        List<ApplicationUser> nurses)
+    private List<Alert> BuildAlerts(List<PatientScenario> scenarios, StaffSet staff)
     {
         var alerts = new List<Alert>();
 
-        foreach (var patient in patients)
+        foreach (var scenario in scenarios)
         {
-            var baseTime = patient.AdmittedAt.AddHours(_rng.Next(1, 6));
+            var patient = scenario.Patient;
+            var latest = scenario.Vitals[^1];
+            var baseTime = latest.RecordedAt.AddMinutes(-_rng.Next(5, 180));
 
-            if (patient.NewsScore >= 7)
+            if (scenario.RiskBand == RiskBand.Critical)
             {
-                // Critical patients: 2-4 alerts (Critical severity → target Doctor)
-                var criticalMessages = new[]
+                var repeatedMessage = $"URGENT: NEWS {patient.NewsScore} for {patient.FullName} - immediate doctor review required.";
+                var alertCount = _rng.Next(3, 6);
+
+                for (var i = 0; i < alertCount; i++)
                 {
-                    $"NEWS Score {patient.NewsScore} — immediate escalation required",
-                    $"O2 saturation critically low — urgent intervention needed",
-                    $"Tachycardia / elevated heart rate detected",
-                    $"Hypertensive crisis — BP dangerously high"
-                };
-                int alertCount = _rng.Next(2, 5);
-                for (int i = 0; i < Math.Min(alertCount, criticalMessages.Length); i++)
-                {
-                    alerts.Add(BuildAlert(
+                    var message = i < 2
+                        ? repeatedMessage
+                        : CriticalAlertMessage(patient, latest, scenario.Case);
+
+                    var createdAt = i == alertCount - 1
+                        ? DateTime.UtcNow.AddMinutes(-_rng.Next(4, 45))
+                        : baseTime.AddMinutes(i * _rng.Next(18, 50));
+
+                    alerts.Add(CreateAlert(
                         patient.Id,
-                        baseTime.AddMinutes(i * _rng.Next(10, 40)),
+                        AppRoles.Doctor,
+                        NextUserId(staff.Doctors),
+                        message,
                         AlertSeverity.Critical,
-                        criticalMessages[i],
-                        doctors, nurses));
+                        createdAt,
+                        isRead: i < alertCount - 2 && _rng.Next(100) < 35));
                 }
+
+                alerts.Add(CreateAlert(
+                    patient.Id,
+                    AppRoles.Nurse,
+                    NextUserId(staff.Nurses),
+                    $"Prepare escalation bundle for {patient.FullName}: latest O2 {latest.OxygenLevel}%, RR {latest.RespirationRate}.",
+                    AlertSeverity.Warning,
+                    DateTime.UtcNow.AddMinutes(-_rng.Next(10, 90)),
+                    isRead: false));
             }
-            else if (patient.NewsScore >= 4)
+            else if (scenario.RiskBand == RiskBand.Medium)
             {
-                // Unstable patients: 1-2 Warning alerts → target Nurse
-                var warnMessages = new[]
+                var count = _rng.Next(1, 4);
+                for (var i = 0; i < count; i++)
                 {
-                    $"Mild oxygen drop — monitor closely",
-                    $"Elevated respiration rate — reassess in 1 hour"
-                };
-                int alertCount = _rng.Next(1, 3);
-                for (int i = 0; i < Math.Min(alertCount, warnMessages.Length); i++)
-                {
-                    alerts.Add(BuildAlert(
+                    alerts.Add(CreateAlert(
                         patient.Id,
-                        baseTime.AddMinutes(i * _rng.Next(15, 60)),
+                        AppRoles.Nurse,
+                        NextUserId(staff.Nurses),
+                        MediumAlertMessage(patient, latest, scenario.Case),
                         AlertSeverity.Warning,
-                        warnMessages[i],
-                        doctors, nurses));
+                        baseTime.AddMinutes(i * _rng.Next(25, 75)),
+                        isRead: _rng.Next(100) < 45));
                 }
             }
-            else if (patient.FlowStatus == PatientFlowStatus.ObservationalStable)
+            else
             {
-                // Stable patients: optional Info alert (50% chance)
-                if (_rng.Next(2) == 0)
+                if (patient.FlowStatus == PatientFlowStatus.ObservationalStable && _rng.Next(100) < 55)
                 {
-                    alerts.Add(BuildAlert(
+                    alerts.Add(CreateAlert(
                         patient.Id,
-                        baseTime,
+                        AppRoles.Doctor,
+                        NextUserId(staff.Doctors),
+                        $"{patient.FullName} is observationally stable with NEWS {patient.NewsScore}. Review when available.",
                         AlertSeverity.Info,
-                        $"Patient admitted and stable — routine monitoring in progress",
-                        doctors, nurses));
+                        baseTime,
+                        isRead: _rng.Next(100) < 60));
+                }
+
+                if (patient.FlowStatus == PatientFlowStatus.Stable)
+                {
+                    alerts.Add(CreateAlert(
+                        patient.Id,
+                        AppRoles.Receptionist,
+                        NextUserId(staff.Receptionists),
+                        $"{patient.FullName} is stable and ready for discharge workflow.",
+                        AlertSeverity.Info,
+                        DateTime.UtcNow.AddMinutes(-_rng.Next(30, 420)),
+                        isRead: _rng.Next(100) < 40));
                 }
             }
-            // Discharged patients (FlowStatus.Stable): no alerts
         }
 
         return alerts;
     }
 
-    private Alert BuildAlert(
-        int patientId,
-        DateTime time,
-        AlertSeverity severity,
-        string message,
-        List<ApplicationUser> doctors,
-        List<ApplicationUser> nurses)
-    {
-        // Critical → Doctor; Warning / Info → Nurse
-        var (targetRole, pool) = severity == AlertSeverity.Critical
-            ? (AppRoles.Doctor, doctors)
-            : (AppRoles.Nurse, nurses);
-
-        var targetUserId = pool.Any() ? pool[_rng.Next(pool.Count)].Id : (string?)null;
-
-        // Older alerts are more likely to have been read
-        bool isRead = time < DateTime.UtcNow.AddDays(-3)
-            ? _rng.Next(100) < 85   // old → 85% read
-            : _rng.Next(100) < 30;  // recent → 30% read
-
-        return new Alert
-        {
-            // Id omitted — auto-increment
-            PatientId = patientId,
-            TargetRole = targetRole,
-            TargetUserId = targetUserId,
-            Message = message,
-            Severity = severity,
-            IsRead = isRead,
-            CreatedAt = time
-        };
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // PATIENT TASKS  — consistent with patient severity
-    // ════════════════════════════════════════════════════════════════════════
-
-    private List<PatientTask> SeedPatientTasks(
-        List<Patient> patients,
-        List<Alert> alerts,
-        List<ApplicationUser> doctors,
-        List<ApplicationUser> nurses)
+    private List<PatientTask> BuildTasks(List<PatientScenario> scenarios, StaffSet staff)
     {
         var tasks = new List<PatientTask>();
 
-        // Task title pools per severity level
-        var criticalTasks = new[]
+        foreach (var scenario in scenarios)
         {
-            "Administer emergency medication",
-            "Prepare for immediate doctor examination",
-            "Attach cardiac monitor",
-            "Insert IV line",
-            "Oxygen mask adjustment",
-            "Notify on-call doctor"
-        };
-        var stableTasks = new[]
-        {
-            "Check vital signs",
-            "Blood glucose check",
-            "Administer scheduled medication",
-            "Patient repositioning",
-            "Wound dressing",
-            "Review lab results"
-        };
+            var patient = scenario.Patient;
+            var latest = scenario.Vitals[^1];
 
-        foreach (var patient in patients)
-        {
-            // isMedicallyStable  — PatientStatus (medical severity)
-            // isWorkflowExiting  — PatientFlowStatus (workflow stage)
-            // These are TWO SEPARATE checks. A patient can be medically stable
-            // but still in WaitingDoctor (doctor hasn't reviewed yet).
-
-            bool isMedicallyUnstable = patient.CurrentStatus == PatientStatus.Unstable;
-            bool isMedicallyCritical = patient.CurrentStatus == PatientStatus.Critical;
-            // FlowStatus.Stable = doctor cleared the patient (workflow stage = exiting)
-            bool isWorkflowExiting = patient.FlowStatus == PatientFlowStatus.Stable;
-
-            if (isWorkflowExiting)
+            switch (patient.FlowStatus)
             {
-                // Exiting patients (FlowStatus.Stable): one completed final task only
-                tasks.Add(BuildTask(
-                    patient.Id,
-                    AppRoles.Nurse,
-                    nurses.Any() ? nurses[_rng.Next(nurses.Count)].Id : null,
-                    "Final vital signs check",
-                    "Pre-discharge vitals recorded and signed off.",
-                    PatientTaskStatus.Completed,
-                    patient.AdmittedAt.AddDays(_rng.Next(1, 5)),
-                    completed: true,
-                    patient.AdmittedAt));
-                continue;
-            }
+                case PatientFlowStatus.UnderObservation:
+                    tasks.Add(CreateTask(patient.Id, AppRoles.Nurse, NextUserId(staff.Nurses),
+                        "Repeat full vital signs",
+                        $"NEWS {patient.NewsScore}; repeat observations and document oxygen response for {scenario.Case.Diagnosis}.",
+                        PickOpenStatus(), latest.RecordedAt.AddMinutes(15), overdue: _rng.Next(100) < 30));
+                    tasks.Add(CreateTask(patient.Id, AppRoles.Nurse, NextUserId(staff.Nurses),
+                        "Maintain observation chart",
+                        "Continue NEWS monitoring while patient remains under observation.",
+                        PatientTaskStatus.Completed, latest.RecordedAt.AddMinutes(-90), overdue: false));
+                    break;
 
-            if (isMedicallyCritical)  // PatientStatus.Critical (NEWS ≥ 7)
-            {
-                // 3-5 tasks: mix of completed and pending
-                int count = _rng.Next(3, 6);
-                for (int i = 0; i < count; i++)
-                {
-                    bool done = i < count - 1; // last one is still pending
-                    var alert = alerts.FirstOrDefault(a =>
-                        a.PatientId == patient.Id && a.Severity == AlertSeverity.Critical);
+                case PatientFlowStatus.ObservationalStable:
+                    tasks.Add(CreateTask(patient.Id, AppRoles.Nurse, NextUserId(staff.Nurses),
+                        "Routine vital signs check",
+                        $"NEWS {patient.NewsScore}; continue routine monitoring and update ISBAR before handover.",
+                        _rng.Next(100) < 70 ? PatientTaskStatus.Completed : PatientTaskStatus.Pending,
+                        latest.RecordedAt.AddMinutes(-120), overdue: _rng.Next(100) < 15));
+                    tasks.Add(CreateTask(patient.Id, AppRoles.Doctor, NextUserId(staff.Doctors),
+                        "Review observational stability",
+                        "Doctor review needed before final stable or treatment decision.",
+                        _rng.Next(100) < 45 ? PatientTaskStatus.Pending : PatientTaskStatus.Completed,
+                        latest.RecordedAt.AddMinutes(-60), overdue: _rng.Next(100) < 10));
+                    break;
 
-                    tasks.Add(BuildTask(
-                        patient.Id,
-                        i % 3 == 0 ? AppRoles.Doctor : AppRoles.Nurse,
-                        i % 3 == 0
-                            ? (doctors.Any() ? doctors[_rng.Next(doctors.Count)].Id : null)
-                            : (nurses.Any() ? nurses[_rng.Next(nurses.Count)].Id : null),
-                        criticalTasks[i % criticalTasks.Length],
-                        alert != null
-                            ? $"Triggered by alert: {alert.Message}"
-                            : $"Critical NEWS {patient.NewsScore} — immediate action required (PatientStatus: {patient.CurrentStatus})",
-                        done ? PatientTaskStatus.Completed : PatientTaskStatus.Pending,
-                        patient.AdmittedAt.AddHours(_rng.Next(1, 12)),
-                        done,
-                        patient.AdmittedAt));
-                }
-            }
-            else if (isMedicallyUnstable)  // PatientStatus.Unstable (NEWS 4-6)
-            {
-                // 1-2 tasks: mostly completed
-                int count = _rng.Next(1, 3);
-                for (int i = 0; i < count; i++)
-                {
-                    bool done = _rng.Next(100) < 70;
-                    tasks.Add(BuildTask(
-                        patient.Id,
-                        AppRoles.Nurse,
-                        nurses.Any() ? nurses[_rng.Next(nurses.Count)].Id : null,
-                        stableTasks[_rng.Next(stableTasks.Length)],
-                        "Routine monitoring — patient under observation",
-                        done ? PatientTaskStatus.Completed : PatientTaskStatus.Pending,
-                        patient.AdmittedAt.AddHours(_rng.Next(1, 8)),
-                        done,
-                        patient.AdmittedAt));
-                }
-            }
-            else
-            {
-                // PatientStatus.Stable (NEWS 0-3, FlowStatus.ObservationalStable):
-                // 1 routine task, completed
-                tasks.Add(BuildTask(
-                    patient.Id,
-                    AppRoles.Nurse,
-                    nurses.Any() ? nurses[_rng.Next(nurses.Count)].Id : null,
-                    stableTasks[_rng.Next(stableTasks.Length)],
-                    "Routine check — patient stable",
-                    PatientTaskStatus.Completed,
-                    patient.AdmittedAt.AddHours(_rng.Next(1, 6)),
-                    completed: true,
-                    patient.AdmittedAt));
+                case PatientFlowStatus.WaitingDoctor:
+                    tasks.Add(CreateTask(patient.Id, AppRoles.Nurse, NextUserId(staff.Nurses),
+                        "Prepare patient for doctor",
+                        $"Critical NEWS {patient.NewsScore}; latest O2 {latest.OxygenLevel}% and RR {latest.RespirationRate}.",
+                        PatientTaskStatus.InProgress, latest.RecordedAt.AddMinutes(5), overdue: _rng.Next(100) < 45));
+                    tasks.Add(CreateTask(patient.Id, AppRoles.Doctor, NextUserId(staff.Doctors),
+                        "Immediate doctor assessment",
+                        $"Doctor must decide Stable or UnderTreatment for {scenario.Case.Diagnosis}.",
+                        PatientTaskStatus.Pending, latest.RecordedAt.AddMinutes(10), overdue: _rng.Next(100) < 55));
+                    tasks.Add(CreateTask(patient.Id, AppRoles.Nurse, NextUserId(staff.Nurses),
+                        "Start escalation preparation",
+                        "Attach monitor, prepare IV access, and keep escalation trolley nearby.",
+                        PatientTaskStatus.Completed, latest.RecordedAt.AddMinutes(-45), overdue: false));
+                    break;
+
+                case PatientFlowStatus.UnderTreatment:
+                    tasks.Add(CreateTask(patient.Id, AppRoles.Nurse, NextUserId(staff.Nurses),
+                        "Administer prescribed treatment",
+                        scenario.Patient.CurrentTreatment ?? "Administer active treatment plan.",
+                        PickMixedStatus(), latest.RecordedAt.AddMinutes(-30), overdue: _rng.Next(100) < 25));
+                    tasks.Add(CreateTask(patient.Id, AppRoles.Doctor, NextUserId(staff.Doctors),
+                        "Reassess treatment response",
+                        $"Review NEWS trend for {scenario.Case.Diagnosis} and decide if patient can move to Stable.",
+                        PickOpenStatus(), latest.RecordedAt.AddMinutes(20), overdue: _rng.Next(100) < 25));
+                    break;
+
+                case PatientFlowStatus.Stable:
+                    tasks.Add(CreateTask(patient.Id, AppRoles.Nurse, NextUserId(staff.Nurses),
+                        "Final vital signs check",
+                        "Confirm NEWS remains low before discharge paperwork.",
+                        PatientTaskStatus.Completed, latest.RecordedAt.AddMinutes(-90), overdue: false));
+                    tasks.Add(CreateTask(patient.Id, AppRoles.Receptionist, NextUserId(staff.Receptionists),
+                        "Complete discharge paperwork",
+                        "Prepare discharge file and verify patient contact details.",
+                        PickOpenStatus(), latest.RecordedAt.AddMinutes(30), overdue: _rng.Next(100) < 35));
+                    break;
+
+                case PatientFlowStatus.Discharged:
+                    tasks.Add(CreateTask(patient.Id, AppRoles.Nurse, NextUserId(staff.Nurses),
+                        "Complete final nursing notes",
+                        "Final observations documented before bed release.",
+                        PatientTaskStatus.Completed, latest.RecordedAt.AddMinutes(-120), overdue: false));
+                    tasks.Add(CreateTask(patient.Id, AppRoles.Receptionist, NextUserId(staff.Receptionists),
+                        "Archive discharge file",
+                        "Discharge workflow completed and bed released.",
+                        PatientTaskStatus.Completed, latest.RecordedAt.AddMinutes(-60), overdue: false));
+                    break;
             }
         }
+
         return tasks;
     }
 
-    private PatientTask BuildTask(
+    private List<MedicalReport> BuildMedicalReports(List<PatientScenario> scenarios, List<ApplicationUser> doctors)
+    {
+        var reports = new List<MedicalReport>();
+        if (!doctors.Any())
+            return reports;
+
+        foreach (var scenario in scenarios)
+        {
+            var patient = scenario.Patient;
+            var latest = scenario.Vitals[^1];
+            var doctor = doctors[_rng.Next(doctors.Count)];
+            var firstReportTime = scenario.Vitals[Math.Min(2, scenario.Vitals.Count - 1)].RecordedAt.AddMinutes(20);
+
+            reports.Add(new MedicalReport
+            {
+                PatientId = patient.Id,
+                DoctorId = doctor.Id,
+                Diagnosis = scenario.Case.Diagnosis,
+                TreatmentPlan = BuildReportPlan(scenario, latest),
+                ReportType = MedicalReportType.TreatmentPlan,
+                CreatedAt = firstReportTime
+            });
+
+            if (patient.FlowStatus == PatientFlowStatus.UnderTreatment ||
+                patient.FlowStatus == PatientFlowStatus.WaitingDoctor ||
+                scenario.RiskBand == RiskBand.Critical)
+            {
+                reports.Add(new MedicalReport
+                {
+                    PatientId = patient.Id,
+                    DoctorId = doctors[_rng.Next(doctors.Count)].Id,
+                    Diagnosis = scenario.Case.Diagnosis,
+                    TreatmentPlan = BuildProgressPlan(scenario, latest),
+                    ReportType = MedicalReportType.TreatmentPlan,
+                    CreatedAt = latest.RecordedAt.AddMinutes(-_rng.Next(30, 180))
+                });
+            }
+
+            if (patient.FlowStatus == PatientFlowStatus.Stable ||
+                patient.FlowStatus == PatientFlowStatus.Discharged)
+            {
+                reports.Add(new MedicalReport
+                {
+                    PatientId = patient.Id,
+                    DoctorId = doctors[_rng.Next(doctors.Count)].Id,
+                    Diagnosis = scenario.Case.Diagnosis,
+                    TreatmentPlan = $"NEWS {patient.NewsScore}; symptoms controlled. Discharge education, medication reconciliation, and follow-up arranged.",
+                    ReportType = MedicalReportType.DischargeReport,
+                    CreatedAt = latest.RecordedAt.AddMinutes(_rng.Next(20, 120))
+                });
+            }
+        }
+
+        return reports
+            .OrderBy(r => r.CreatedAt)
+            .ToList();
+    }
+
+    private PatientTask CreateTask(
         int patientId,
         string role,
         string? userId,
@@ -718,12 +669,26 @@ public class HospitalSeeder
         string description,
         PatientTaskStatus status,
         DateTime createdAt,
-        bool completed,
-        DateTime admittedAt)
+        bool overdue)
     {
+        var dueAt = overdue
+            ? DateTime.UtcNow.AddMinutes(-_rng.Next(20, 240))
+            : createdAt.AddMinutes(_rng.Next(45, 240));
+
+        if (dueAt <= createdAt)
+            createdAt = dueAt.AddMinutes(-_rng.Next(40, 180));
+
+        DateTime? completedAt = null;
+        if (status == PatientTaskStatus.Completed)
+        {
+            var completionWindow = Math.Max(10, (int)(dueAt - createdAt).TotalMinutes - 5);
+            completedAt = createdAt.AddMinutes(_rng.Next(8, completionWindow + 1));
+            if (completedAt > dueAt)
+                completedAt = dueAt.AddMinutes(-1);
+        }
+
         return new PatientTask
         {
-            // Id omitted — auto-increment
             PatientId = patientId,
             AssignedToRole = role,
             AssignedToUserId = userId,
@@ -731,106 +696,331 @@ public class HospitalSeeder
             Description = description,
             Status = status,
             CreatedAt = createdAt,
-            CompletedAt = completed
-                ? createdAt.AddMinutes(_rng.Next(20, 180))
-                : null
+            DueAt = dueAt,
+            CompletedAt = completedAt
         };
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // MEDICAL REPORTS  — consistent with FlowStatus
-    // ════════════════════════════════════════════════════════════════════════
-    //
-    // MedicalReportType has only two values:
-    //   TreatmentPlan  = 1  → doctor wrote a treatment plan (patient still admitted)
-    //   DischargeReport = 2 → doctor cleared patient for discharge
-    //
-    // Rules:
-    //   WaitingDoctor / UnderObservation  → TreatmentPlan only
-    //   ObservationalStable               → TreatmentPlan (maybe + DischargeReport)
-    //   Stable (discharged)               → TreatmentPlan + DischargeReport
-
-    private List<MedicalReport> SeedMedicalReports(
-        List<Patient> patients,
-        List<ApplicationUser> doctors)
+    private Alert CreateAlert(
+        int patientId,
+        string role,
+        string? userId,
+        string message,
+        AlertSeverity severity,
+        DateTime createdAt,
+        bool isRead)
     {
-        var reports = new List<MedicalReport>();
-
-        foreach (var patient in patients)
+        return new Alert
         {
-            if (!doctors.Any()) continue;
-
-            var doctor = doctors[_rng.Next(doctors.Count)];
-            bool isExiting = patient.FlowStatus == PatientFlowStatus.Stable;
-
-            // How many TreatmentPlan reports? (simulates multiple doctor visits)
-            int planCount = patient.NewsScore >= 7 ? _rng.Next(2, 4)
-                          : patient.NewsScore >= 4 ? _rng.Next(1, 3)
-                          : 1;
-
-            for (int i = 0; i < planCount; i++)
-            {
-                reports.Add(new MedicalReport
-                {
-                    // Id omitted — auto-increment
-                    PatientId = patient.Id,
-                    DoctorId = doctor.Id,
-                    Diagnosis = patient.Background ?? "Under investigation",
-                    TreatmentPlan = patient.CurrentTreatment ?? "To be determined",
-                    ReportType = MedicalReportType.TreatmentPlan,
-                    CreatedAt = patient.AdmittedAt.AddDays(i * _rng.Next(1, 3))
-                                                       .AddHours(_rng.Next(6, 18))
-                });
-            }
-
-            if (isExiting)
-            {
-                // Add DischargeReport — always the last one, after treatment plans
-                reports.Add(new MedicalReport
-                {
-                    PatientId = patient.Id,
-                    DoctorId = doctor.Id,
-                    Diagnosis = patient.Background ?? "Resolved",
-                    TreatmentPlan = "Patient stable. Discharge approved.",
-                    ReportType = MedicalReportType.DischargeReport,
-                    CreatedAt = patient.AdmittedAt
-                                           .AddDays(planCount * _rng.Next(1, 3))
-                                           .AddHours(_rng.Next(6, 18))
-                });
-            }
-        }
-        return reports;
+            PatientId = patientId,
+            TargetRole = role,
+            TargetUserId = userId,
+            Message = message,
+            Severity = severity,
+            CreatedAt = createdAt,
+            IsRead = isRead
+        };
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // HELPER UTILITIES
-    // ════════════════════════════════════════════════════════════════════════
-
-    // Random int in [min, max)
-    private int Ri(int min, int max) => _rng.Next(min, max);
-    // Random double in [min, max)
-    private double Rd(double min, double max) => min + _rng.NextDouble() * (max - min);
-
-    private static int Clamp(int v, int lo, int hi) => Math.Max(lo, Math.Min(hi, v));
-    private static double ClampD(double v, double lo, double hi) => Math.Max(lo, Math.Min(hi, v));
-
-    private string PickMedications() =>
-        _rng.Next(4) switch
+    private string BuildBackground(ClinicalCase patientCase, RiskBand riskBand, bool deteriorated)
+    {
+        var acuity = riskBand switch
         {
-            0 => "Aspirin 100mg, Metformin 500mg",
-            1 => "Warfarin 5mg, Atorvastatin 40mg, Lisinopril 10mg",
-            2 => "Insulin Glargine 20U, Amlodipine 5mg",
-            _ => "Paracetamol 1g, Omeprazole 20mg, Enoxaparin 40mg"
+            RiskBand.Low => "low-risk observation",
+            RiskBand.Medium => "moderate NEWS under close observation",
+            _ => "critical deterioration requiring escalation"
         };
 
-    private string PickTreatment(string band) =>
-        band switch
+        var course = deteriorated
+            ? " The patient was previously stable but deteriorated during the current observation window."
+            : string.Empty;
+
+        return $"{patientCase.Background} Current admission is for {acuity}.{course}";
+    }
+
+    private string BuildCurrentTreatment(ClinicalCase patientCase, RiskBand riskBand, PatientFlowStatus flowStatus)
+    {
+        if (flowStatus == PatientFlowStatus.ObservationalStable)
+            return "Routine monitoring, oral hydration, and repeat NEWS before doctor review.";
+
+        if (flowStatus == PatientFlowStatus.Stable || flowStatus == PatientFlowStatus.Discharged)
+            return "Symptoms controlled; continue home medication plan and follow-up instructions.";
+
+        return riskBand switch
         {
-            "Green" => "Routine monitoring, oral medications",
-            "Mild" => "Oral medications, daily vitals check",
-            "Yellow" => "IV Fluids, supplemental oxygen, close monitoring",
-            "Red" => "IV Antibiotics, oxygen therapy, cardiac monitoring",
-            "DarkRed" => "ICU-level care, vasopressors, mechanical ventilation support",
-            _ => "Supportive care"
+            RiskBand.Low => "Routine monitoring and comfort measures.",
+            RiskBand.Medium => patientCase.MediumTreatment,
+            _ => patientCase.CriticalTreatment
         };
+    }
+
+    private string BuildReportPlan(PatientScenario scenario, VitalReading latest)
+    {
+        return scenario.RiskBand switch
+        {
+            RiskBand.Low =>
+                $"NEWS {scenario.Patient.NewsScore}; vitals stable (O2 {latest.OxygenLevel}%, HR {latest.HeartRate}). Continue observation and review for Stable decision.",
+            RiskBand.Medium =>
+                $"NEWS {scenario.Patient.NewsScore}; continue close observation, repeat vitals, and maintain {scenario.Case.MediumTreatment}.",
+            _ =>
+                $"NEWS {scenario.Patient.NewsScore}; urgent senior review required. Prepare for treatment escalation for {scenario.Case.Diagnosis}."
+        };
+    }
+
+    private string BuildProgressPlan(PatientScenario scenario, VitalReading latest)
+    {
+        var prefix = scenario.Deteriorated
+            ? "Deterioration noted after prior stable observations."
+            : "Ongoing high-risk review.";
+
+        return $"{prefix} Latest vitals: O2 {latest.OxygenLevel}%, HR {latest.HeartRate}, BP {latest.SystolicPressure}/{latest.DiastolicPressure}, RR {latest.RespirationRate}. {scenario.Case.CriticalTreatment}";
+    }
+
+    private string CriticalAlertMessage(Patient patient, VitalReading latest, ClinicalCase patientCase)
+    {
+        return _rng.Next(4) switch
+        {
+            0 => $"O2 saturation {latest.OxygenLevel}% in {patientCase.Diagnosis}; escalation required.",
+            1 => $"Respiratory rate {latest.RespirationRate}/min with NEWS {patient.NewsScore}; doctor review overdue.",
+            2 => $"Heart rate {latest.HeartRate}/min with unstable observations; prepare immediate assessment.",
+            _ => $"Blood pressure {latest.SystolicPressure}/{latest.DiastolicPressure} and NEWS {patient.NewsScore}; urgent clinical decision needed."
+        };
+    }
+
+    private string MediumAlertMessage(Patient patient, VitalReading latest, ClinicalCase patientCase)
+    {
+        return _rng.Next(3) switch
+        {
+            0 => $"NEWS {patient.NewsScore} for {patientCase.Diagnosis}; continue close observation.",
+            1 => $"O2 {latest.OxygenLevel}% and RR {latest.RespirationRate}; repeat vital signs within the hour.",
+            _ => $"Moderate deterioration risk for {patient.FullName}; update ISBAR if trend worsens."
+        };
+    }
+
+    private ClinicalCase PickCase(RiskBand riskBand)
+    {
+        var cases = ClinicalCases
+            .Where(c => c.DefaultRisk == riskBand || _rng.Next(100) < 35)
+            .ToList();
+
+        return cases[_rng.Next(cases.Count)];
+    }
+
+    private PatientTaskStatus PickOpenStatus() =>
+        _rng.Next(100) < 55 ? PatientTaskStatus.Pending : PatientTaskStatus.InProgress;
+
+    private PatientTaskStatus PickMixedStatus()
+    {
+        var roll = _rng.Next(100);
+        if (roll < 35) return PatientTaskStatus.Completed;
+        if (roll < 70) return PatientTaskStatus.InProgress;
+        return PatientTaskStatus.Pending;
+    }
+
+    private string BuildPatientName()
+    {
+        var firstNames = new[]
+        {
+            "Amina", "Omar", "Youssef", "Mariam", "Hassan", "Farida", "Nour", "Karim",
+            "Salma", "Tarek", "Dina", "Mostafa", "Rania", "Ahmed", "Laila", "Mona",
+            "Ibrahim", "Nada", "Hossam", "Aya", "Khaled", "Reem", "Samir", "Yara"
+        };
+
+        var lastNames = new[]
+        {
+            "Hassan", "Mansour", "El-Sayed", "Fathy", "Nasser", "Farouk", "Ibrahim",
+            "Salem", "Zaki", "Karim", "Adel", "Amin", "Mahmoud", "Tawfik"
+        };
+
+        return $"{firstNames[_rng.Next(firstNames.Length)]} {lastNames[_rng.Next(lastNames.Length)]}";
+    }
+
+    private string? NextUserId(List<ApplicationUser> users)
+    {
+        if (!users.Any())
+            return null;
+
+        var user = users[_assignmentCursor % users.Count];
+        _assignmentCursor++;
+        return user.Id;
+    }
+
+    private int CalculateNews(VitalReading vital)
+    {
+        var score = 0;
+
+        if (vital.OxygenLevel <= 91) score += 3;
+        else if (vital.OxygenLevel <= 93) score += 2;
+        else if (vital.OxygenLevel <= 95) score += 1;
+
+        if (vital.HeartRate >= 131) score += 3;
+        else if (vital.HeartRate >= 111) score += 2;
+        else if (vital.HeartRate >= 91) score += 1;
+
+        if (vital.Temperature >= 39) score += 2;
+        else if (vital.Temperature <= 35) score += 3;
+
+        if (vital.SystolicPressure <= 90) score += 3;
+        else if (vital.SystolicPressure <= 100) score += 2;
+
+        if (vital.RespirationRate >= 25) score += 3;
+        else if (vital.RespirationRate >= 21) score += 2;
+
+        return score;
+    }
+
+    private static PatientStatus NewsToPatientStatus(int newsScore) =>
+        newsScore >= 7 ? PatientStatus.Critical :
+        newsScore >= 4 ? PatientStatus.Unstable :
+        PatientStatus.Stable;
+
+    private int Ri(int minInclusive, int maxExclusive) => _rng.Next(minInclusive, maxExclusive);
+
+    private double Rd(double minInclusive, double maxExclusive) =>
+        Math.Round(minInclusive + _rng.NextDouble() * (maxExclusive - minInclusive), 1);
+
+    private static int Clamp(int value, int min, int max) =>
+        Math.Max(min, Math.Min(max, value));
+
+    private static double ClampD(double value, double min, double max) =>
+        Math.Round(Math.Max(min, Math.Min(max, value)), 1);
+
+    private int _assignmentCursor;
+
+    private static readonly ClinicalCase[] ClinicalCases =
+    {
+        new(
+            Code: "PNEUMONIA",
+            Diagnosis: "Community-acquired pneumonia",
+            DepartmentName: "Emergency",
+            Background: "Cough, fever, pleuritic chest discomfort, and reduced oral intake.",
+            PreviousMedications: "Paracetamol 1g, Salbutamol inhaler",
+            MediumTreatment: "IV ceftriaxone, oral azithromycin, fluids, and oxygen as needed.",
+            CriticalTreatment: "High-flow oxygen, broad-spectrum IV antibiotics, blood cultures, and senior review.",
+            DefaultRisk: RiskBand.Medium),
+        new(
+            Code: "COPD",
+            Diagnosis: "COPD exacerbation",
+            DepartmentName: "Emergency",
+            Background: "Known COPD with increasing dyspnea, wheeze, and productive cough.",
+            PreviousMedications: "Tiotropium inhaler, Salbutamol inhaler, Prednisolone 5mg",
+            MediumTreatment: "Nebulized bronchodilators, controlled oxygen, steroids, and sputum culture.",
+            CriticalTreatment: "Controlled oxygen target 88-92%, nebulizers, IV steroids, ABG, and NIV assessment.",
+            DefaultRisk: RiskBand.Medium),
+        new(
+            Code: "ACS",
+            Diagnosis: "Acute coronary syndrome",
+            DepartmentName: "Cardiology",
+            Background: "Central chest pain with diaphoresis and cardiovascular risk factors.",
+            PreviousMedications: "Aspirin 100mg, Atorvastatin 40mg, Bisoprolol 2.5mg",
+            MediumTreatment: "ECG monitoring, serial troponin, aspirin, statin, and cardiology review.",
+            CriticalTreatment: "Cardiac monitor, dual antiplatelet therapy, anticoagulation, and urgent cardiology decision.",
+            DefaultRisk: RiskBand.Critical),
+        new(
+            Code: "SEPSIS",
+            Diagnosis: "Sepsis secondary to urinary infection",
+            DepartmentName: "ICU",
+            Background: "Fever, rigors, confusion, dysuria, and poor urine output.",
+            PreviousMedications: "Metformin 500mg, Lisinopril 10mg",
+            MediumTreatment: "Sepsis screening, IV fluids, urine culture, and IV antibiotics.",
+            CriticalTreatment: "Sepsis six bundle, fluid resuscitation, lactate monitoring, vasopressor readiness, and ICU review.",
+            DefaultRisk: RiskBand.Critical),
+        new(
+            Code: "STROKE",
+            Diagnosis: "Acute ischemic stroke observation",
+            DepartmentName: "Neurology",
+            Background: "Sudden unilateral weakness with slurred speech, now under neurological observation.",
+            PreviousMedications: "Amlodipine 5mg, Clopidogrel 75mg",
+            MediumTreatment: "Neurological observations, swallow screen, CT review, and BP monitoring.",
+            CriticalTreatment: "Urgent neurological review, airway monitoring, CT angiography pathway, and escalation plan.",
+            DefaultRisk: RiskBand.Medium),
+        new(
+            Code: "HF",
+            Diagnosis: "Acute decompensated heart failure",
+            DepartmentName: "Cardiology",
+            Background: "Orthopnea, ankle swelling, basal crackles, and reduced exercise tolerance.",
+            PreviousMedications: "Furosemide 40mg, Ramipril 5mg, Spironolactone 25mg",
+            MediumTreatment: "IV diuretics, fluid balance chart, oxygen, and renal function monitoring.",
+            CriticalTreatment: "High-flow oxygen, IV diuretics, cardiac monitoring, and urgent cardiology review.",
+            DefaultRisk: RiskBand.Medium),
+        new(
+            Code: "DKA",
+            Diagnosis: "Diabetic ketoacidosis",
+            DepartmentName: "ICU",
+            Background: "Vomiting, dehydration, abdominal pain, and high capillary glucose.",
+            PreviousMedications: "Insulin glargine 24 units, Metformin 500mg",
+            MediumTreatment: "IV fluids, fixed-rate insulin infusion, potassium replacement, and hourly glucose checks.",
+            CriticalTreatment: "DKA protocol, continuous monitoring, electrolyte correction, and ICU-level review.",
+            DefaultRisk: RiskBand.Critical),
+        new(
+            Code: "POSTOP",
+            Diagnosis: "Post-operative recovery observation",
+            DepartmentName: "Emergency",
+            Background: "Post-operative monitoring after abdominal surgery with controlled pain.",
+            PreviousMedications: "Omeprazole 20mg, Paracetamol 1g",
+            MediumTreatment: "Analgesia, wound review, mobilization support, and routine observations.",
+            CriticalTreatment: "Senior surgical review, IV fluids, sepsis screen, and urgent imaging if indicated.",
+            DefaultRisk: RiskBand.Low),
+        new(
+            Code: "ASTHMA",
+            Diagnosis: "Asthma exacerbation",
+            DepartmentName: "Emergency",
+            Background: "Wheeze, cough, and shortness of breath after viral illness.",
+            PreviousMedications: "Budesonide inhaler, Salbutamol inhaler",
+            MediumTreatment: "Nebulized salbutamol, oral steroids, oxygen if needed, and peak-flow monitoring.",
+            CriticalTreatment: "Back-to-back nebulizers, IV magnesium consideration, oxygen, and senior respiratory review.",
+            DefaultRisk: RiskBand.Medium),
+        new(
+            Code: "GI",
+            Diagnosis: "Upper gastrointestinal bleeding",
+            DepartmentName: "ICU",
+            Background: "Melena, dizziness, epigastric pain, and anticoagulant exposure.",
+            PreviousMedications: "Warfarin 5mg, Omeprazole 20mg",
+            MediumTreatment: "IV proton pump inhibitor, group and save, fluid resuscitation, and hemoglobin monitoring.",
+            CriticalTreatment: "Major bleed protocol readiness, IV access, transfusion planning, and urgent endoscopy referral.",
+            DefaultRisk: RiskBand.Critical)
+    };
+
+    private sealed record SeedUser(string FullName, string Email, string Password, string Role);
+
+    private sealed record StaffSet(
+        List<ApplicationUser> Admins,
+        List<ApplicationUser> Doctors,
+        List<ApplicationUser> Nurses,
+        List<ApplicationUser> Receptionists);
+
+    private sealed record ClinicalCase(
+        string Code,
+        string Diagnosis,
+        string DepartmentName,
+        string Background,
+        string PreviousMedications,
+        string MediumTreatment,
+        string CriticalTreatment,
+        RiskBand DefaultRisk);
+
+    private sealed record PatientScenario(
+        Patient Patient,
+        ClinicalCase Case,
+        RiskBand RiskBand,
+        PatientFlowStatus IntendedFlowStatus,
+        bool Deteriorated,
+        List<VitalReading> Vitals,
+        Bed? AssignedBed);
+
+    private sealed record VitalReading(
+        int HeartRate,
+        double OxygenLevel,
+        double Temperature,
+        int SystolicPressure,
+        int DiastolicPressure,
+        int RespirationRate,
+        DateTime RecordedAt);
+
+    private enum RiskBand
+    {
+        Low,
+        Medium,
+        Critical
+    }
 }

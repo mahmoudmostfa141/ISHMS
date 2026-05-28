@@ -14,15 +14,18 @@ public class WorkflowService : IWorkflowService
     private readonly AppDbContext _context;
     private readonly IPatientTaskService _taskService;
     private readonly IAlertService _alertService;
+    private readonly IHubService _hubService;
 
     public WorkflowService(
         AppDbContext context,
         IPatientTaskService taskService,
-        IAlertService alertService)
+        IAlertService alertService,
+        IHubService hubService)
     {
         _context = context;
         _taskService = taskService;
         _alertService = alertService;
+        _hubService = hubService;
     }
 
     // ==================== Advance ====================
@@ -35,16 +38,20 @@ public class WorkflowService : IWorkflowService
         if (patient == null)
             throw new Exception("Patient not found");
 
-        // ✅ تأكد إن الانتقال valid
         ValidateTransition(patient.FlowStatus, newStatus);
 
         patient.FlowStatus = newStatus;
         await _context.SaveChangesAsync();
 
-        // ✅ Side Effects
+        // ✅ جديد — بعت Status Change للـ Doctors و Nurses
+        await _hubService.SendStatusUpdateAsync(
+            patient.Id,
+            patient.FullName,
+            newStatus.ToString()
+        );
+
         await HandleSideEffectsAsync(patient.Id, patient.FullName, newStatus);
     }
-
     // ==================== Get Current Status ====================
 
     public async Task<PatientFlowStatus> GetCurrentStatusAsync(int patientId)
@@ -131,9 +138,9 @@ public class WorkflowService : IWorkflowService
     // ==================== Side Effects ====================
 
     private async Task HandleSideEffectsAsync(
-        int patientId,
-        string patientName,
-        PatientFlowStatus newStatus)
+     int patientId,
+     string patientName,
+     PatientFlowStatus newStatus)
     {
         switch (newStatus)
         {
@@ -156,6 +163,8 @@ public class WorkflowService : IWorkflowService
                     Description = $"Patient {patientName} is observationally stable. Continue routine monitoring."
                 });
 
+            
+
                 await _alertService.CreateAsync(new CreateAlertDto
                 {
                     PatientId = patientId,
@@ -163,6 +172,8 @@ public class WorkflowService : IWorkflowService
                     Message = $"Patient {patientName} is observationally stable. Please review when available.",
                     Severity = AlertSeverity.Info
                 });
+
+               
                 break;
 
             case PatientFlowStatus.WaitingDoctor:
@@ -174,6 +185,8 @@ public class WorkflowService : IWorkflowService
                     Description = $"Patient {patientName} NEWS Score is critical. Prepare for immediate doctor examination."
                 });
 
+               
+
                 await _alertService.CreateAsync(new CreateAlertDto
                 {
                     PatientId = patientId,
@@ -181,6 +194,7 @@ public class WorkflowService : IWorkflowService
                     Message = $"URGENT: Patient {patientName} requires immediate attention.",
                     Severity = AlertSeverity.Critical
                 });
+               
                 break;
 
             case PatientFlowStatus.UnderTreatment:
@@ -191,6 +205,7 @@ public class WorkflowService : IWorkflowService
                     Message = $"Treatment plan created for patient {patientName}. Begin treatment protocol.",
                     Severity = AlertSeverity.Warning
                 });
+              
                 break;
 
             case PatientFlowStatus.Stable:
@@ -201,10 +216,12 @@ public class WorkflowService : IWorkflowService
                     Message = $"Patient {patientName} is stable and ready for discharge procedures.",
                     Severity = AlertSeverity.Info
                 });
+
                 break;
 
             case PatientFlowStatus.Discharged:
                 break;
         }
+           
     }
 }
